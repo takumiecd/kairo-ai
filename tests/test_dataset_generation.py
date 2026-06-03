@@ -46,6 +46,26 @@ class DatasetGenerationTest(unittest.TestCase):
             self.assertTrue(example.input.startswith('git commit -m "'))
             self.assertTrue(example.input.endswith('"'))
 
+    def test_noise_can_touch_mutable_english_spans(self):
+        generator = DatasetGenerator(seed=0)
+
+        examples = generator.generate_examples(
+            ["tokenizer は後で追加する"],
+            num_augmentations=8,
+        )
+
+        self.assertTrue(any(not example.input.startswith("tokenizer ") for example in examples))
+
+    def test_can_disable_literal_noise(self):
+        generator = DatasetGenerator(seed=0, noise_literals=False)
+
+        examples = generator.generate_examples(
+            ["tokenizer は後で追加する"],
+            num_augmentations=5,
+        )
+
+        self.assertTrue(all(example.input.startswith("tokenizer ") for example in examples))
+
     def test_splits_mixed_text(self):
         spans = split_mixed_text('git commit -m "修正した"')
 

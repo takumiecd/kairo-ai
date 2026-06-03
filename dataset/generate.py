@@ -7,12 +7,28 @@ from dataclasses import asdict
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 
 from dataset.examples import SYNTHETIC_EXAMPLES
 from dataset.noise import InputNoiser
 from dataset.reading import JapaneseRomajiConverter
 from dataset.vocab import build_input_vocab
 from dataset.vocab import build_output_vocab
+
+
+PROTECTED_LITERAL_WORDS = {
+    "git",
+    "commit",
+    "cargo",
+    "test",
+    "docker",
+    "compose",
+    "pytest",
+    "main",
+    "api",
+}
+
+LITERAL_TOKEN_RE = re.compile(r"[A-Za-z0-9_./-]+|\s+|.")
 
 
 @dataclass(frozen=True)
@@ -27,18 +43,43 @@ class TrainingExample:
 
 
 class DatasetGenerator:
-    def __init__(self, seed: int = 0) -> None:
+    def __init__(self, seed: int = 0, noise_literals: bool = True) -> None:
         self.converter = JapaneseRomajiConverter()
         self.noiser = InputNoiser(seed=seed)
+        self.noise_literals = noise_literals
 
     def generate_pair(self, text: str) -> tuple[str, str]:
         return self.converter.convert_text(text), text
 
     def generate_input_segments(self, text: str) -> list[tuple[str, bool]]:
-        return [
-            (span.input, span.kind == "japanese")
-            for span in self.converter.convert_spans(text)
-        ]
+        segments: list[tuple[str, bool]] = []
+        for span in self.converter.convert_spans(text):
+            if span.kind == "japanese":
+                segments.append((span.input, True))
+            else:
+                segments.extend(self.split_literal_input(span.input))
+        return segments
+
+    def split_literal_input(self, text: str) -> list[tuple[str, bool]]:
+        segments: list[tuple[str, bool]] = []
+        for match in LITERAL_TOKEN_RE.finditer(text):
+            token = match.group(0)
+            segments.append((token, self.is_mutable_literal(token)))
+        return segments
+
+    def is_mutable_literal(self, token: str) -> bool:
+        if not self.noise_literals:
+            return False
+        if not any(char.isalpha() for char in token):
+            return False
+        normalized = token.lower()
+        if normalized in PROTECTED_LITERAL_WORDS:
+            return False
+        if token.startswith("-"):
+            return False
+        if "/" in token or "." in token or "_" in token:
+            return False
+        return True
 
     def generate_examples(
         self,
@@ -94,6 +135,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
+        "--no-noise-literals",
+        action="store_true",
+        help="Disable typo noise for mutable literal English spans.",
+    )
+    parser.add_argument(
         "--show-vocab",
         action="store_true",
         help="Print generated input/output char vocab sizes.",
@@ -103,7 +149,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    generator = DatasetGenerator(seed=args.seed)
+    generator = DatasetGenerator(seed=args.seed, noise_literals=not args.no_noise_literals)
     examples = generator.generate_examples(
         SYNTHETIC_EXAMPLES,
         num_augmentations=args.augmentations,
