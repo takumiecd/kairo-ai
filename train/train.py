@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import random
 
@@ -163,6 +164,63 @@ def get_resume_model_dims(checkpoint: dict) -> tuple[int, int]:
     embed_dim = int(state_dict["encoder_emb.weight"].shape[1])
     hidden_dim = int(state_dict["encoder_lstm.weight_hh_l0"].shape[1])
     return embed_dim, hidden_dim
+
+
+def plot_metrics(output_dir: Path) -> None:
+    metrics_log_path = output_dir / "metrics.jsonl"
+    if not metrics_log_path.exists():
+        return
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        
+        epochs = []
+        train_losses = []
+        valid_losses = []
+        valid_cers = []
+        cer_epochs = []
+        
+        with open(metrics_log_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    data = json.loads(line)
+                    epochs.append(data["epoch"])
+                    train_losses.append(data["train_loss"])
+                    valid_losses.append(data["valid_loss"])
+                    if "valid_cer" in data and data["valid_cer"] is not None:
+                        valid_cers.append(data["valid_cer"])
+                        cer_epochs.append(data["epoch"])
+                        
+        plt.figure(figsize=(10, 6))
+        plt.plot(epochs, train_losses, label="Train Loss", marker="o", color="blue")
+        plt.plot(epochs, valid_losses, label="Validation Loss", marker="x", color="red")
+        plt.title("Loss Curves")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.grid(True, linestyle="--", alpha=0.6)
+        plt.legend()
+        
+        loss_output_path = output_dir / "loss_curve.png"
+        plt.savefig(loss_output_path, dpi=150, bbox_inches="tight")
+        plt.close()
+        
+        if valid_cers:
+            plt.figure(figsize=(10, 6))
+            plt.plot(cer_epochs, valid_cers, label="Validation CER", marker="s", color="green")
+            plt.title("Validation Character Error Rate (CER)")
+            plt.xlabel("Epoch")
+            plt.ylabel("CER")
+            plt.grid(True, linestyle="--", alpha=0.6)
+            plt.legend()
+            
+            cer_output_path = output_dir / "cer_curve.png"
+            plt.savefig(cer_output_path, dpi=150, bbox_inches="tight")
+            plt.close()
+            
+    except ImportError:
+        pass
 
 
 def main() -> None:
@@ -352,6 +410,20 @@ def main() -> None:
                 valid_loss,
                 config,
             )
+
+        # Write metrics to log and update curve plot
+        metrics_log_path = args.output_dir / "metrics.jsonl"
+        metrics_record = {
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "valid_loss": valid_loss,
+        }
+        if valid_cer is not None:
+            metrics_record["valid_cer"] = valid_cer
+        with open(metrics_log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(metrics_record) + "\n")
+
+        plot_metrics(args.output_dir)
 
 
 if __name__ == "__main__":
