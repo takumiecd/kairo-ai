@@ -50,6 +50,22 @@ python -m train.overfit --data data/synthetic.jsonl --steps 30 --batch-size 2 --
 
 評価指標として、文字列同士の CER(Character Error Rate) を `eval.metrics` に用意しています。decode実装後は予測文字列とtargetの比較に使います。
 
+## 🚂 Training
+checkpoint、config、vocab を保存する通常の学習 entrypoint です。
+
+```bash
+python -m train.train \
+  --data data/synthetic.jsonl \
+  --output-dir artifacts/run1 \
+  --epochs 5 \
+  --batch-size 4 \
+  --embed-dim 64 \
+  --hidden-dim 128 \
+  --learning-rate 0.001
+```
+
+学習成果物は `artifacts/run1/` 以下に保存されます。
+
 ## 📜 ライセンスとデータ方針
 このリポジトリのソースコードは MIT License で公開します。
 

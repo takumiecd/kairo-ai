@@ -1,0 +1,207 @@
+"""Train Kairo RNN-T on generated JSONL data."""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import asdict
+from dataclasses import dataclass
+from pathlib import Path
+import random
+
+import torch
+from torch.utils.data import DataLoader
+from torch.utils.data import Subset
+
+from model.transducer import KairoTransducer
+from train.checkpoint import save_checkpoint
+from train.checkpoint import save_vocabs
+from train.checkpoint import write_json
+from train.data import collate_transducer_batch
+from train.data import load_dataset_and_vocabs
+from train.loss import compute_rnnt_loss
+from train.loss import evaluate_average_loss
+from train.loss import move_batch_to_device
+
+
+@dataclass(frozen=True)
+class TrainConfig:
+    data: str
+    output_dir: str
+    epochs: int
+    batch_size: int
+    embed_dim: int
+    hidden_dim: int
+    learning_rate: float
+    weight_decay: float
+    validation_ratio: float
+    limit_examples: int | None
+    gradient_clip: float
+    device: str
+    seed: int
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--embed-dim", type=int, default=64)
+    parser.add_argument("--hidden-dim", type=int, default=128)
+    parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--weight-decay", type=float, default=1e-2)
+    parser.add_argument("--validation-ratio", type=float, default=0.1)
+    parser.add_argument("--limit-examples", type=int, default=None)
+    parser.add_argument("--gradient-clip", type=float, default=1.0)
+    parser.add_argument(
+        "--device",
+        choices=["auto", "cpu", "mps", "cuda"],
+        default="auto",
+    )
+    parser.add_argument("--seed", type=int, default=0)
+    return parser.parse_args()
+
+
+def select_device(name: str) -> torch.device:
+    if name == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+
+    device = torch.device(name)
+    if name == "cuda" and not torch.cuda.is_available():
+        raise ValueError("CUDA was requested but is not available")
+    if name == "mps" and not torch.backends.mps.is_available():
+        raise ValueError("MPS was requested but is not available")
+    return device
+
+
+def split_dataset(dataset, validation_ratio: float, seed: int):
+    if not 0.0 <= validation_ratio < 1.0:
+        raise ValueError("validation_ratio must be in [0.0, 1.0)")
+
+    indexes = list(range(len(dataset)))
+    random.Random(seed).shuffle(indexes)
+    valid_size = int(len(indexes) * validation_ratio)
+    if validation_ratio > 0.0 and valid_size == 0 and len(indexes) > 1:
+        valid_size = 1
+
+    valid_indexes = indexes[:valid_size]
+    train_indexes = indexes[valid_size:] or valid_indexes
+    return Subset(dataset, train_indexes), Subset(dataset, valid_indexes)
+
+
+def build_loader(dataset, vocabs, batch_size: int, shuffle: bool) -> DataLoader:
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        collate_fn=lambda examples: collate_transducer_batch(examples, vocabs),
+    )
+
+
+def main() -> None:
+    args = parse_args()
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    device = select_device(args.device)
+
+    dataset, vocabs = load_dataset_and_vocabs(args.data)
+    if args.limit_examples is not None:
+        dataset = Subset(dataset, range(min(args.limit_examples, len(dataset))))
+
+    train_dataset, valid_dataset = split_dataset(
+        dataset,
+        validation_ratio=args.validation_ratio,
+        seed=args.seed,
+    )
+    train_loader = build_loader(train_dataset, vocabs, args.batch_size, shuffle=True)
+    valid_loader = (
+        build_loader(valid_dataset, vocabs, args.batch_size, shuffle=False)
+        if len(valid_dataset) > 0
+        else None
+    )
+
+    config = TrainConfig(
+        data=str(args.data),
+        output_dir=str(args.output_dir),
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        embed_dim=args.embed_dim,
+        hidden_dim=args.hidden_dim,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        validation_ratio=args.validation_ratio,
+        limit_examples=args.limit_examples,
+        gradient_clip=args.gradient_clip,
+        device=str(device),
+        seed=args.seed,
+    )
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    write_json(args.output_dir / "config.json", asdict(config))
+    save_vocabs(args.output_dir, vocabs)
+
+    model = KairoTransducer(
+        input_vocab_size=len(vocabs.input_vocab.id_to_token),
+        output_vocab_size=len(vocabs.output_vocab.id_to_token),
+        embed_dim=args.embed_dim,
+        hidden_dim=args.hidden_dim,
+    ).to(device)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=args.learning_rate,
+        weight_decay=args.weight_decay,
+    )
+
+    best_valid_loss = float("inf")
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        train_losses: list[float] = []
+        for batch in train_loader:
+            batch = move_batch_to_device(batch, device)
+            optimizer.zero_grad(set_to_none=True)
+            loss = compute_rnnt_loss(model, batch, vocabs.blank_id)
+            loss.backward()
+            if args.gradient_clip > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.gradient_clip)
+            optimizer.step()
+            train_losses.append(float(loss.item()))
+
+        train_loss = sum(train_losses) / len(train_losses)
+        valid_loss = (
+            evaluate_average_loss(model, valid_loader, vocabs.blank_id, device)
+            if valid_loader is not None
+            else train_loss
+        )
+        print(
+            f"epoch={epoch} train_loss={train_loss:.4f} "
+            f"valid_loss={valid_loss:.4f}"
+        )
+
+        checkpoint_path = args.output_dir / "checkpoints" / f"epoch_{epoch:03d}.pt"
+        save_checkpoint(
+            checkpoint_path,
+            model,
+            optimizer,
+            epoch,
+            train_loss,
+            valid_loss,
+            config,
+        )
+        if valid_loss < best_valid_loss:
+            best_valid_loss = valid_loss
+            save_checkpoint(
+                args.output_dir / "checkpoints" / "best.pt",
+                model,
+                optimizer,
+                epoch,
+                train_loss,
+                valid_loss,
+                config,
+            )
+
+
+if __name__ == "__main__":
+    main()

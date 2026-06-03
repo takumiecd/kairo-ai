@@ -6,13 +6,14 @@ import argparse
 from pathlib import Path
 
 import torch
-import torchaudio.functional as F
 from torch.utils.data import DataLoader
 from torch.utils.data import Subset
 
 from model.transducer import KairoTransducer
 from train.data import collate_transducer_batch
 from train.data import load_dataset_and_vocabs
+from train.loss import compute_rnnt_loss
+from train.loss import evaluate_average_loss
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,29 +38,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=0)
     return parser.parse_args()
-
-
-def compute_loss(model, batch, blank_id: int) -> torch.Tensor:
-    logits = model(batch["inputs"], batch["prediction_inputs"])
-    return F.rnnt_loss(
-        logits=logits,
-        targets=batch["targets"],
-        logit_lengths=batch["input_lengths"],
-        target_lengths=batch["target_lengths"],
-        blank=blank_id,
-        reduction="mean",
-        fused_log_softmax=True,
-    )
-
-
-@torch.no_grad()
-def evaluate_average_loss(model, loader: DataLoader, blank_id: int) -> float:
-    model.eval()
-    losses: list[float] = []
-    for batch in loader:
-        losses.append(float(compute_loss(model, batch, blank_id).item()))
-    model.train()
-    return sum(losses) / len(losses)
 
 
 def main() -> None:
@@ -104,7 +82,7 @@ def main() -> None:
             batch = next(iterator)
 
         optimizer.zero_grad(set_to_none=True)
-        loss = compute_loss(model, batch, vocabs.blank_id)
+        loss = compute_rnnt_loss(model, batch, vocabs.blank_id)
         loss.backward()
         optimizer.step()
 

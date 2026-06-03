@@ -7,8 +7,8 @@ from model.transducer import KairoTransducer
 from train.data import build_vocabs_from_records
 from train.data import collate_transducer_batch
 from train.data import encode_records
-from train.overfit import compute_loss
-from train.overfit import evaluate_average_loss
+from train.loss import compute_rnnt_loss
+from train.loss import evaluate_average_loss
 
 
 class TrainOverfitTest(unittest.TestCase):
@@ -47,7 +47,7 @@ class TrainOverfitTest(unittest.TestCase):
             hidden_dim=16,
         )
 
-        loss = compute_loss(model, batch, vocabs.blank_id)
+        loss = compute_rnnt_loss(model, batch, vocabs.blank_id)
         loss.backward()
 
         grad_norm = torch.norm(model.joint_fc2.weight.grad)
