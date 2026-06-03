@@ -35,6 +35,11 @@ class TrainConfig:
     batch_size: int
     embed_dim: int
     hidden_dim: int
+    input_embed_dim: int
+    output_embed_dim: int
+    encoder_hidden_dim: int
+    prediction_hidden_dim: int
+    joint_hidden_dim: int
     learning_rate: float
     weight_decay: float
     validation_ratio: float
@@ -48,8 +53,20 @@ class TrainConfig:
     valid_cer_every: int
     valid_beam_width: int
     valid_expansion_width: int
+    output_tokenizer: str
+    output_vocab_size: int
+    output_min_token_frequency: int
     max_len: int | None
     amp: bool
+
+
+@dataclass(frozen=True)
+class ModelDims:
+    input_embed_dim: int
+    output_embed_dim: int
+    encoder_hidden_dim: int
+    prediction_hidden_dim: int
+    joint_hidden_dim: int
 
 
 def parse_args() -> argparse.Namespace:
@@ -66,6 +83,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--embed-dim", type=int, default=64)
     parser.add_argument("--hidden-dim", type=int, default=128)
+    parser.add_argument("--input-embed-dim", type=int, default=None)
+    parser.add_argument("--output-embed-dim", type=int, default=None)
+    parser.add_argument("--encoder-hidden-dim", type=int, default=None)
+    parser.add_argument("--prediction-hidden-dim", type=int, default=None)
+    parser.add_argument("--joint-hidden-dim", type=int, default=None)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-2)
     parser.add_argument("--validation-ratio", type=float, default=0.1)
@@ -93,6 +115,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--valid-cer-every", type=int, default=1)
     parser.add_argument("--valid-beam-width", type=int, default=5)
     parser.add_argument("--valid-expansion-width", type=int, default=5)
+    parser.add_argument(
+        "--output-tokenizer",
+        choices=["char", "bpe"],
+        default="char",
+        help="Tokenizer for output targets. Input remains character-tokenized.",
+    )
+    parser.add_argument("--output-vocab-size", type=int, default=4000)
+    parser.add_argument("--output-min-token-frequency", type=int, default=2)
     parser.add_argument(
         "--max-len",
         type=int,
@@ -155,15 +185,54 @@ def load_best_valid_loss(output_dir: Path) -> float:
     return float(state.get("valid_loss", float("inf")))
 
 
-def get_resume_model_dims(checkpoint: dict) -> tuple[int, int]:
+def resolve_model_dims(args: argparse.Namespace) -> ModelDims:
+    return ModelDims(
+        input_embed_dim=args.input_embed_dim or args.embed_dim,
+        output_embed_dim=args.output_embed_dim or args.embed_dim,
+        encoder_hidden_dim=args.encoder_hidden_dim or args.hidden_dim,
+        prediction_hidden_dim=args.prediction_hidden_dim or args.hidden_dim,
+        joint_hidden_dim=args.joint_hidden_dim or args.hidden_dim,
+    )
+
+
+def get_resume_model_dims(checkpoint: dict) -> ModelDims:
     config = checkpoint.get("config") or {}
+    if all(
+        key in config
+        for key in (
+            "input_embed_dim",
+            "output_embed_dim",
+            "encoder_hidden_dim",
+            "prediction_hidden_dim",
+            "joint_hidden_dim",
+        )
+    ):
+        return ModelDims(
+            input_embed_dim=int(config["input_embed_dim"]),
+            output_embed_dim=int(config["output_embed_dim"]),
+            encoder_hidden_dim=int(config["encoder_hidden_dim"]),
+            prediction_hidden_dim=int(config["prediction_hidden_dim"]),
+            joint_hidden_dim=int(config["joint_hidden_dim"]),
+        )
     if "embed_dim" in config and "hidden_dim" in config:
-        return int(config["embed_dim"]), int(config["hidden_dim"])
+        embed_dim = int(config["embed_dim"])
+        hidden_dim = int(config["hidden_dim"])
+        return ModelDims(
+            input_embed_dim=embed_dim,
+            output_embed_dim=embed_dim,
+            encoder_hidden_dim=hidden_dim,
+            prediction_hidden_dim=hidden_dim,
+            joint_hidden_dim=hidden_dim,
+        )
 
     state_dict = checkpoint["model_state_dict"]
-    embed_dim = int(state_dict["encoder_emb.weight"].shape[1])
-    hidden_dim = int(state_dict["encoder_lstm.weight_hh_l0"].shape[1])
-    return embed_dim, hidden_dim
+    return ModelDims(
+        input_embed_dim=int(state_dict["encoder_emb.weight"].shape[1]),
+        output_embed_dim=int(state_dict["pred_emb.weight"].shape[1]),
+        encoder_hidden_dim=int(state_dict["encoder_lstm.weight_hh_l0"].shape[1]),
+        prediction_hidden_dim=int(state_dict["pred_lstm.weight_hh_l0"].shape[1]),
+        joint_hidden_dim=int(state_dict["joint_fc1.weight"].shape[0]),
+    )
 
 
 def plot_metrics(output_dir: Path) -> None:
@@ -232,16 +301,44 @@ def main() -> None:
         load_checkpoint(args.resume, map_location=device) if args.resume else None
     )
     if resume_checkpoint is not None:
-        args.embed_dim, args.hidden_dim = get_resume_model_dims(resume_checkpoint)
-        print(
-            f"resume_model_dims embed_dim={args.embed_dim} "
-            f"hidden_dim={args.hidden_dim}"
+        resume_config = resume_checkpoint.get("config") or {}
+        resume_dims = get_resume_model_dims(resume_checkpoint)
+        args.input_embed_dim = resume_dims.input_embed_dim
+        args.output_embed_dim = resume_dims.output_embed_dim
+        args.encoder_hidden_dim = resume_dims.encoder_hidden_dim
+        args.prediction_hidden_dim = resume_dims.prediction_hidden_dim
+        args.joint_hidden_dim = resume_dims.joint_hidden_dim
+        args.output_tokenizer = resume_config.get("output_tokenizer", args.output_tokenizer)
+        args.output_vocab_size = int(
+            resume_config.get("output_vocab_size", args.output_vocab_size)
         )
+        args.output_min_token_frequency = int(
+            resume_config.get(
+                "output_min_token_frequency",
+                args.output_min_token_frequency,
+            )
+        )
+        print(
+            f"resume_model_dims input_embed_dim={args.input_embed_dim} "
+            f"output_embed_dim={args.output_embed_dim} "
+            f"encoder_hidden_dim={args.encoder_hidden_dim} "
+            f"prediction_hidden_dim={args.prediction_hidden_dim} "
+            f"joint_hidden_dim={args.joint_hidden_dim}"
+        )
+        print(
+            f"resume_output_tokenizer output_tokenizer={args.output_tokenizer} "
+            f"output_vocab_size={args.output_vocab_size} "
+            f"output_min_token_frequency={args.output_min_token_frequency}"
+        )
+    dims = resolve_model_dims(args)
 
     dataset, explicit_valid_dataset, vocabs = load_train_valid_datasets_and_vocabs(
         args.data,
         args.valid_data,
         max_len=args.max_len,
+        output_tokenizer=args.output_tokenizer,
+        output_vocab_size=args.output_vocab_size,
+        output_min_token_frequency=args.output_min_token_frequency,
     )
     if args.limit_examples is not None:
         dataset = Subset(dataset, range(min(args.limit_examples, len(dataset))))
@@ -275,6 +372,11 @@ def main() -> None:
         batch_size=args.batch_size,
         embed_dim=args.embed_dim,
         hidden_dim=args.hidden_dim,
+        input_embed_dim=dims.input_embed_dim,
+        output_embed_dim=dims.output_embed_dim,
+        encoder_hidden_dim=dims.encoder_hidden_dim,
+        prediction_hidden_dim=dims.prediction_hidden_dim,
+        joint_hidden_dim=dims.joint_hidden_dim,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         validation_ratio=args.validation_ratio,
@@ -288,6 +390,9 @@ def main() -> None:
         valid_cer_every=args.valid_cer_every,
         valid_beam_width=args.valid_beam_width,
         valid_expansion_width=args.valid_expansion_width,
+        output_tokenizer=args.output_tokenizer,
+        output_vocab_size=args.output_vocab_size,
+        output_min_token_frequency=args.output_min_token_frequency,
         max_len=args.max_len,
         amp=args.amp,
     )
@@ -298,8 +403,11 @@ def main() -> None:
     model = KairoTransducer(
         input_vocab_size=len(vocabs.input_vocab.id_to_token),
         output_vocab_size=len(vocabs.output_vocab.id_to_token),
-        embed_dim=args.embed_dim,
-        hidden_dim=args.hidden_dim,
+        input_embed_dim=dims.input_embed_dim,
+        output_embed_dim=dims.output_embed_dim,
+        encoder_hidden_dim=dims.encoder_hidden_dim,
+        prediction_hidden_dim=dims.prediction_hidden_dim,
+        joint_hidden_dim=dims.joint_hidden_dim,
     ).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),

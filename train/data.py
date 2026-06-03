@@ -11,6 +11,7 @@ from torch.utils.data import Dataset
 
 from dataset.vocab import CharVocab
 from dataset.vocab import build_input_vocab
+from dataset.vocab import build_output_bpe_vocab
 from dataset.vocab import build_output_vocab
 
 
@@ -64,10 +65,27 @@ def load_jsonl_examples(path: Path) -> list[dict[str, str]]:
     return examples
 
 
-def build_vocabs_from_records(records: list[dict[str, str]]) -> TrainingVocabs:
+def build_vocabs_from_records(
+    records: list[dict[str, str]],
+    output_tokenizer: str = "char",
+    output_vocab_size: int = 4000,
+    output_min_token_frequency: int = 2,
+) -> TrainingVocabs:
+    targets = [record["target"] for record in records]
+    if output_tokenizer == "char":
+        output_vocab = build_output_vocab(targets)
+    elif output_tokenizer == "bpe":
+        output_vocab = build_output_bpe_vocab(
+            targets,
+            vocab_size=output_vocab_size,
+            min_frequency=output_min_token_frequency,
+        )
+    else:
+        raise ValueError("output_tokenizer must be one of: char, bpe")
+
     return TrainingVocabs(
         input_vocab=build_input_vocab([record["input"] for record in records]),
-        output_vocab=build_output_vocab([record["target"] for record in records]),
+        output_vocab=output_vocab,
     )
 
 
@@ -98,6 +116,9 @@ def load_train_valid_datasets_and_vocabs(
     train_path: Path,
     valid_path: Path | None,
     max_len: int | None = None,
+    output_tokenizer: str = "char",
+    output_vocab_size: int = 4000,
+    output_min_token_frequency: int = 2,
 ) -> tuple[JsonlTransducerDataset, JsonlTransducerDataset | None, TrainingVocabs]:
     train_records = load_jsonl_examples(train_path)
     valid_records = load_jsonl_examples(valid_path) if valid_path is not None else []
@@ -110,7 +131,12 @@ def load_train_valid_datasets_and_vocabs(
             r for r in valid_records
             if len(r["input"]) <= max_len and len(r["target"]) <= max_len
         ]
-    vocabs = build_vocabs_from_records(train_records + valid_records)
+    vocabs = build_vocabs_from_records(
+        train_records + valid_records,
+        output_tokenizer=output_tokenizer,
+        output_vocab_size=output_vocab_size,
+        output_min_token_frequency=output_min_token_frequency,
+    )
     train_dataset = encode_records(train_records, vocabs)
     valid_dataset = encode_records(valid_records, vocabs) if valid_path is not None else None
     return train_dataset, valid_dataset, vocabs

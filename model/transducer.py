@@ -9,27 +9,37 @@ class KairoTransducer(nn.Module):
         self,
         input_vocab_size: int,   # 例: アルファベット(a-z) + 記号
         output_vocab_size: int,  # 例: 日本語文字(ひらがな、漢字、記号) + Blank(空白)
-        embed_dim: int = 256,
-        hidden_dim: int = 512,
+        embed_dim: int | None = 256,
+        hidden_dim: int | None = 512,
+        input_embed_dim: int | None = None,
+        output_embed_dim: int | None = None,
+        encoder_hidden_dim: int | None = None,
+        prediction_hidden_dim: int | None = None,
+        joint_hidden_dim: int | None = None,
     ):
         super().__init__()
+        input_embed_dim = input_embed_dim or int(embed_dim)
+        output_embed_dim = output_embed_dim or int(embed_dim)
+        encoder_hidden_dim = encoder_hidden_dim or int(hidden_dim)
+        prediction_hidden_dim = prediction_hidden_dim or int(hidden_dim)
+        joint_hidden_dim = joint_hidden_dim or int(hidden_dim)
         
         # 1. Encoder (Acoustic Modelに相当)
         # ユーザーが打ったローマ字を処理する
-        self.encoder_emb = nn.Embedding(input_vocab_size, embed_dim)
+        self.encoder_emb = nn.Embedding(input_vocab_size, input_embed_dim)
         # 本格実装時はTransformerEncoder等に変更
-        self.encoder_lstm = nn.LSTM(embed_dim, hidden_dim, num_layers=2, batch_first=True)
+        self.encoder_lstm = nn.LSTM(input_embed_dim, encoder_hidden_dim, num_layers=2, batch_first=True)
         
         # 2. Prediction Network (Language Modelに相当)
         # これまでに出力した日本語(確定済み文字)を処理する
-        self.pred_emb = nn.Embedding(output_vocab_size, embed_dim)
+        self.pred_emb = nn.Embedding(output_vocab_size, output_embed_dim)
         # 本格実装時はTransformerDecoderやLSTMに変更
-        self.pred_lstm = nn.LSTM(embed_dim, hidden_dim, num_layers=1, batch_first=True)
+        self.pred_lstm = nn.LSTM(output_embed_dim, prediction_hidden_dim, num_layers=1, batch_first=True)
         
         # 3. Joint Network
         # Encoderの特徴量とPrediction Networkの特徴量を結合して最終予測
-        self.joint_fc1 = nn.Linear(hidden_dim * 2, hidden_dim)
-        self.joint_fc2 = nn.Linear(hidden_dim, output_vocab_size)
+        self.joint_fc1 = nn.Linear(encoder_hidden_dim + prediction_hidden_dim, joint_hidden_dim)
+        self.joint_fc2 = nn.Linear(joint_hidden_dim, output_vocab_size)
         
     def forward(self, x, y):
         """

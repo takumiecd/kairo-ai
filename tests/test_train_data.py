@@ -52,6 +52,24 @@ class TrainDataTest(unittest.TestCase):
         self.assertEqual(len(valid_dataset), 1)
         self.assertIn("確", vocabs.output_vocab.token_to_id)
 
+    def test_build_vocabs_supports_bpe_output_tokenizer(self):
+        records = [
+            {"input": "shuuseishita", "target": "修正した"},
+            {"input": "kakuninishita", "target": "確認した"},
+            {"input": "moushikomishita", "target": "申し込みした"},
+        ]
+
+        vocabs = build_vocabs_from_records(
+            records,
+            output_tokenizer="bpe",
+            output_vocab_size=30,
+            output_min_token_frequency=2,
+        )
+        dataset = encode_records(records, vocabs)
+
+        self.assertIn("した", vocabs.output_vocab.token_to_id)
+        self.assertLess(len(dataset[0].target_ids), len(records[0]["target"]))
+
 
 if __name__ == "__main__":
     unittest.main()

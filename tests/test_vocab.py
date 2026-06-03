@@ -1,6 +1,7 @@
 import unittest
 
 from dataset.vocab import build_input_vocab
+from dataset.vocab import build_output_bpe_vocab
 from dataset.vocab import build_output_vocab
 
 
@@ -20,6 +21,19 @@ class VocabTest(unittest.TestCase):
         self.assertEqual(vocab.id_to_token[:4], ["<pad>", "<blank>", "<bos>", "<unk>"])
         self.assertIn("修", vocab.token_to_id)
         self.assertIn("g", vocab.token_to_id)
+
+    def test_output_bpe_vocab_encodes_repeated_subwords(self):
+        vocab = build_output_bpe_vocab(
+            ["修正した", "確認した", "修正した"],
+            vocab_size=20,
+            min_frequency=2,
+        )
+
+        self.assertIn("した", vocab.token_to_id)
+        ids = vocab.encode("修正した")
+
+        self.assertLess(len(ids), len("修正した"))
+        self.assertEqual(vocab.decode(ids), "修正した")
 
 
 if __name__ == "__main__":

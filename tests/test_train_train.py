@@ -11,6 +11,7 @@ from train.train import select_device
 from train.train import split_dataset
 from train.train import load_best_valid_loss
 from train.train import get_resume_model_dims
+from train.train import ModelDims
 
 
 class TrainEntrypointTest(unittest.TestCase):
@@ -64,17 +65,61 @@ class TrainEntrypointTest(unittest.TestCase):
             "model_state_dict": {},
         }
 
-        self.assertEqual(get_resume_model_dims(checkpoint), (128, 256))
+        self.assertEqual(
+            get_resume_model_dims(checkpoint),
+            ModelDims(
+                input_embed_dim=128,
+                output_embed_dim=128,
+                encoder_hidden_dim=256,
+                prediction_hidden_dim=256,
+                joint_hidden_dim=256,
+            ),
+        )
+
+    def test_resume_model_dims_reads_split_checkpoint_config(self):
+        checkpoint = {
+            "config": {
+                "input_embed_dim": 96,
+                "output_embed_dim": 256,
+                "encoder_hidden_dim": 512,
+                "prediction_hidden_dim": 384,
+                "joint_hidden_dim": 320,
+            },
+            "model_state_dict": {},
+        }
+
+        self.assertEqual(
+            get_resume_model_dims(checkpoint),
+            ModelDims(
+                input_embed_dim=96,
+                output_embed_dim=256,
+                encoder_hidden_dim=512,
+                prediction_hidden_dim=384,
+                joint_hidden_dim=320,
+            ),
+        )
 
     def test_resume_model_dims_can_infer_from_state_dict(self):
         checkpoint = {
             "model_state_dict": {
                 "encoder_emb.weight": torch.zeros(50, 128),
                 "encoder_lstm.weight_hh_l0": torch.zeros(1024, 256),
+                "pred_emb.weight": torch.zeros(50, 96),
+                "pred_lstm.weight_hh_l0": torch.zeros(768, 192),
+                "joint_fc1.weight": torch.zeros(320, 448),
             }
         }
 
-        self.assertEqual(get_resume_model_dims(checkpoint), (128, 256))
+        self.assertEqual(
+            get_resume_model_dims(checkpoint),
+            ModelDims(
+                input_embed_dim=128,
+                output_embed_dim=96,
+                encoder_hidden_dim=256,
+                prediction_hidden_dim=192,
+                joint_hidden_dim=320,
+            ),
+        )
 
 
 if __name__ == "__main__":

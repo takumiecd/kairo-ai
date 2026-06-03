@@ -42,8 +42,13 @@ def load_model_from_artifact(artifact_dir: Path, checkpoint: Path | None = None)
     model = KairoTransducer(
         input_vocab_size=len(input_vocab.id_to_token),
         output_vocab_size=len(output_vocab.id_to_token),
-        embed_dim=int(config["embed_dim"]),
-        hidden_dim=int(config["hidden_dim"]),
+        input_embed_dim=int(config.get("input_embed_dim", config["embed_dim"])),
+        output_embed_dim=int(config.get("output_embed_dim", config["embed_dim"])),
+        encoder_hidden_dim=int(config.get("encoder_hidden_dim", config["hidden_dim"])),
+        prediction_hidden_dim=int(
+            config.get("prediction_hidden_dim", config["hidden_dim"])
+        ),
+        joint_hidden_dim=int(config.get("joint_hidden_dim", config["hidden_dim"])),
     )
     model.load_state_dict(state["model_state_dict"])
     model.eval()
