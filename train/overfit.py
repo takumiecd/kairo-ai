@@ -8,6 +8,7 @@ from pathlib import Path
 import torch
 import torchaudio.functional as F
 from torch.utils.data import DataLoader
+from torch.utils.data import Subset
 
 from model.transducer import KairoTransducer
 from train.data import collate_transducer_batch
@@ -22,8 +23,43 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--embed-dim", type=int, default=32)
     parser.add_argument("--hidden-dim", type=int, default=64)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument(
+        "--max-examples",
+        type=int,
+        default=None,
+        help="Use only the first N examples for tiny overfit checks.",
+    )
+    parser.add_argument(
+        "--eval-every",
+        type=int,
+        default=10,
+        help="Evaluate average loss every N steps. Use 0 to disable.",
+    )
     parser.add_argument("--seed", type=int, default=0)
     return parser.parse_args()
+
+
+def compute_loss(model, batch, blank_id: int) -> torch.Tensor:
+    logits = model(batch["inputs"], batch["prediction_inputs"])
+    return F.rnnt_loss(
+        logits=logits,
+        targets=batch["targets"],
+        logit_lengths=batch["input_lengths"],
+        target_lengths=batch["target_lengths"],
+        blank=blank_id,
+        reduction="mean",
+        fused_log_softmax=True,
+    )
+
+
+@torch.no_grad()
+def evaluate_average_loss(model, loader: DataLoader, blank_id: int) -> float:
+    model.eval()
+    losses: list[float] = []
+    for batch in loader:
+        losses.append(float(compute_loss(model, batch, blank_id).item()))
+    model.train()
+    return sum(losses) / len(losses)
 
 
 def main() -> None:
@@ -31,6 +67,9 @@ def main() -> None:
     torch.manual_seed(args.seed)
 
     dataset, vocabs = load_dataset_and_vocabs(args.data)
+    if args.max_examples is not None:
+        dataset = Subset(dataset, range(min(args.max_examples, len(dataset))))
+
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -47,7 +86,15 @@ def main() -> None:
     )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
 
-    first_loss: float | None = None
+    eval_loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=lambda examples: collate_transducer_batch(examples, vocabs),
+    )
+    initial_eval_loss = evaluate_average_loss(model, eval_loader, vocabs.blank_id)
+    print(f"initial_eval_loss={initial_eval_loss:.4f}")
+
     last_loss = 0.0
     for step in range(1, args.steps + 1):
         try:
@@ -57,25 +104,22 @@ def main() -> None:
             batch = next(iterator)
 
         optimizer.zero_grad(set_to_none=True)
-        logits = model(batch["inputs"], batch["prediction_inputs"])
-        loss = F.rnnt_loss(
-            logits=logits,
-            targets=batch["targets"],
-            logit_lengths=batch["input_lengths"],
-            target_lengths=batch["target_lengths"],
-            blank=vocabs.blank_id,
-            reduction="mean",
-            fused_log_softmax=True,
-        )
+        loss = compute_loss(model, batch, vocabs.blank_id)
         loss.backward()
         optimizer.step()
 
         last_loss = float(loss.item())
-        if first_loss is None:
-            first_loss = last_loss
         print(f"step={step} loss={last_loss:.4f}")
+        if args.eval_every > 0 and step % args.eval_every == 0:
+            eval_loss = evaluate_average_loss(model, eval_loader, vocabs.blank_id)
+            print(f"step={step} eval_loss={eval_loss:.4f}")
 
-    print(f"first_loss={first_loss:.4f} last_loss={last_loss:.4f}")
+    final_eval_loss = evaluate_average_loss(model, eval_loader, vocabs.blank_id)
+    print(
+        f"initial_eval_loss={initial_eval_loss:.4f} "
+        f"final_eval_loss={final_eval_loss:.4f} "
+        f"last_train_loss={last_loss:.4f}"
+    )
 
 
 if __name__ == "__main__":
