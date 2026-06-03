@@ -87,6 +87,16 @@ python -m train.train \
 
 学習成果物は `artifacts/run1/` 以下に保存されます。
 
+途中から再開する場合:
+
+```bash
+python -m train.train \
+  --data data/synthetic/train.jsonl \
+  --output-dir artifacts/run1 \
+  --epochs 20 \
+  --resume artifacts/run1/checkpoints/epoch_010.pt
+```
+
 ## 🔎 Greedy Decode
 学習済みartifactからモデルとvocabを復元し、greedy decodeで予測文字列を確認します。
 

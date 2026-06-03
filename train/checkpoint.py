@@ -45,3 +45,7 @@ def save_checkpoint(
         },
         path,
     )
+
+
+def load_checkpoint(path: Path, map_location=None) -> dict[str, Any]:
+    return torch.load(path, map_location=map_location)

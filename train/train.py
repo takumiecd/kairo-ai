@@ -16,6 +16,7 @@ from model.transducer import KairoTransducer
 from train.checkpoint import save_checkpoint
 from train.checkpoint import save_vocabs
 from train.checkpoint import write_json
+from train.checkpoint import load_checkpoint
 from train.data import collate_transducer_batch
 from train.data import load_dataset_and_vocabs
 from train.loss import compute_rnnt_loss
@@ -38,6 +39,7 @@ class TrainConfig:
     gradient_clip: float
     device: str
     seed: int
+    resume: str | None
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,6 +61,12 @@ def parse_args() -> argparse.Namespace:
         default="auto",
     )
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--resume",
+        type=Path,
+        default=None,
+        help="Checkpoint path to resume from.",
+    )
     return parser.parse_args()
 
 
@@ -102,6 +110,14 @@ def build_loader(dataset, vocabs, batch_size: int, shuffle: bool) -> DataLoader:
     )
 
 
+def load_best_valid_loss(output_dir: Path) -> float:
+    best_path = output_dir / "checkpoints" / "best.pt"
+    if not best_path.exists():
+        return float("inf")
+    state = load_checkpoint(best_path, map_location="cpu")
+    return float(state.get("valid_loss", float("inf")))
+
+
 def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
@@ -138,6 +154,7 @@ def main() -> None:
         gradient_clip=args.gradient_clip,
         device=str(device),
         seed=args.seed,
+        resume=str(args.resume) if args.resume else None,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_json(args.output_dir / "config.json", asdict(config))
@@ -155,8 +172,16 @@ def main() -> None:
         weight_decay=args.weight_decay,
     )
 
-    best_valid_loss = float("inf")
-    for epoch in range(1, args.epochs + 1):
+    start_epoch = 1
+    if args.resume:
+        checkpoint = load_checkpoint(args.resume, map_location=device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        start_epoch = int(checkpoint["epoch"]) + 1
+        print(f"resumed_from={args.resume} start_epoch={start_epoch}")
+
+    best_valid_loss = load_best_valid_loss(args.output_dir)
+    for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         train_losses: list[float] = []
         for batch in train_loader:
