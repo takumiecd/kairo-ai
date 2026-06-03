@@ -1,0 +1,22 @@
+[project]
+name = "kairo-ai"
+version = "0.1.0"
+description = "Machine learning backend for Kairo IME"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0.0",
+    "torchaudio>=2.0.0",
+    "transformers>=4.30.0",
+    # 形態素解析 (漢字 -> 読み 仮名変換用)
+    "sudachipy>=0.6.7",
+    "sudachidict-core>=20230110",
+    # データ処理・進捗表示
+    "tqdm>=4.65.0",
+    "numpy>=1.24.0",
+    "pykakasi>=2.2.1", # かな -> ローマ字変換用
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
