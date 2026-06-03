@@ -14,6 +14,13 @@ from decode.scores import top_k_token_probs
 from model.transducer import KairoTransducer
 
 
+def infer_model_device(model) -> torch.device:
+    try:
+        return next(model.parameters()).device
+    except (AttributeError, StopIteration):
+        return torch.device("cpu")
+
+
 def load_vocab(path: Path) -> CharVocab:
     with path.open("r", encoding="utf-8") as file:
         token_to_id = json.load(file)
@@ -59,7 +66,8 @@ def greedy_decode(
         if token in output_vocab.token_to_id
     }
 
-    x = torch.tensor([input_ids], dtype=torch.long)
+    device = infer_model_device(model)
+    x = torch.tensor([input_ids], dtype=torch.long, device=device)
     emitted_ids: list[int] = []
     prediction_ids = [bos_id]
 
@@ -67,7 +75,7 @@ def greedy_decode(
     while input_step < len(input_ids) and len(emitted_ids) < max_output_length:
         symbols_emitted = 0
         while symbols_emitted < max_symbols_per_step and len(emitted_ids) < max_output_length:
-            y = torch.tensor([prediction_ids], dtype=torch.long)
+            y = torch.tensor([prediction_ids], dtype=torch.long, device=device)
             logits = model(x, y)
             step_logits = logits[0, input_step, len(prediction_ids) - 1]
             token_id = int(torch.argmax(step_logits).item())
@@ -94,8 +102,9 @@ def inspect_next_token_probs(
 ):
     bos_id = output_vocab.token_to_id["<bos>"]
     prefix_ids = output_vocab.encode(output_prefix)
-    x = torch.tensor([input_ids], dtype=torch.long)
-    y = torch.tensor([[bos_id] + prefix_ids], dtype=torch.long)
+    device = infer_model_device(model)
+    x = torch.tensor([input_ids], dtype=torch.long, device=device)
+    y = torch.tensor([[bos_id] + prefix_ids], dtype=torch.long, device=device)
     logits = model(x, y)
     return top_k_token_probs(logits[0, 0, len(prefix_ids)], output_vocab.id_to_token, k=k)
 

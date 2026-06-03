@@ -68,6 +68,10 @@ python -m dataset.split \
   --seed 0
 ```
 
+For practical training, target at least tens of thousands of generated examples
+first, then scale toward hundreds of thousands. Increase the number of Aozora
+sources and prefer `augmentations=1` or `2` until validation CER is being tracked.
+
 Preview examples without writing a file:
 
 ```bash

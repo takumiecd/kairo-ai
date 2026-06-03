@@ -22,6 +22,7 @@ from train.data import load_train_valid_datasets_and_vocabs
 from train.loss import compute_rnnt_loss
 from train.loss import evaluate_average_loss
 from train.loss import move_batch_to_device
+from train.validation import evaluate_decode_cer
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,11 @@ class TrainConfig:
     device: str
     seed: int
     resume: str | None
+    valid_decode: str
+    valid_cer_samples: int
+    valid_cer_every: int
+    valid_beam_width: int
+    valid_expansion_width: int
 
 
 def parse_args() -> argparse.Namespace:
@@ -74,6 +80,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Checkpoint path to resume from.",
     )
+    parser.add_argument(
+        "--valid-decode",
+        choices=["none", "greedy", "beam"],
+        default="none",
+        help="Decoder used for validation CER.",
+    )
+    parser.add_argument("--valid-cer-samples", type=int, default=100)
+    parser.add_argument("--valid-cer-every", type=int, default=1)
+    parser.add_argument("--valid-beam-width", type=int, default=5)
+    parser.add_argument("--valid-expansion-width", type=int, default=5)
     return parser.parse_args()
 
 
@@ -195,6 +211,11 @@ def main() -> None:
         device=str(device),
         seed=args.seed,
         resume=str(args.resume) if args.resume else None,
+        valid_decode=args.valid_decode,
+        valid_cer_samples=args.valid_cer_samples,
+        valid_cer_every=args.valid_cer_every,
+        valid_beam_width=args.valid_beam_width,
+        valid_expansion_width=args.valid_expansion_width,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_json(args.output_dir / "config.json", asdict(config))
@@ -239,10 +260,33 @@ def main() -> None:
             if valid_loader is not None
             else train_loss
         )
-        print(
-            f"epoch={epoch} train_loss={train_loss:.4f} "
-            f"valid_loss={valid_loss:.4f}"
-        )
+        valid_cer = None
+        if (
+            valid_dataset is not None
+            and args.valid_decode != "none"
+            and args.valid_cer_every > 0
+            and epoch % args.valid_cer_every == 0
+        ):
+            valid_cer = evaluate_decode_cer(
+                model,
+                valid_dataset,
+                vocabs.output_vocab,
+                decoder=args.valid_decode,
+                max_samples=args.valid_cer_samples,
+                beam_width=args.valid_beam_width,
+                expansion_width=args.valid_expansion_width,
+            )
+
+        metrics = [
+            f"epoch={epoch}",
+            f"train_loss={train_loss:.4f}",
+            f"valid_loss={valid_loss:.4f}",
+        ]
+        if valid_cer is not None:
+            metrics.append(f"valid_cer={valid_cer:.4f}")
+            metrics.append(f"valid_decode={args.valid_decode}")
+            metrics.append(f"valid_cer_samples={args.valid_cer_samples}")
+        print(" ".join(metrics))
 
         checkpoint_path = args.output_dir / "checkpoints" / f"epoch_{epoch:03d}.pt"
         save_checkpoint(

@@ -30,6 +30,8 @@ class TrainDataTest(unittest.TestCase):
         self.assertTrue((batch["prediction_inputs"][:, 0] == vocabs.bos_id).all())
         self.assertEqual(str(batch["targets"].dtype), "torch.int32")
         self.assertEqual(vocabs.blank_id, 1)
+        self.assertEqual(dataset[0].input_text, 'git commit -m "baguwoshuuseishita"')
+        self.assertEqual(dataset[0].target_text, 'git commit -m "バグを修正した"')
 
     def test_load_train_valid_datasets_builds_shared_vocab(self):
         import tempfile

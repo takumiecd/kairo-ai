@@ -9,6 +9,7 @@ from pathlib import Path
 import torch
 
 from dataset.vocab import CharVocab
+from decode.greedy import infer_model_device
 from decode.greedy import load_model_from_artifact
 from decode.scores import Candidate
 from decode.scores import normalize_candidate_confidence
@@ -60,7 +61,8 @@ def beam_search_decode(
         for token in ("<pad>", "<bos>", "<unk>")
         if token in output_vocab.token_to_id
     }
-    x = torch.tensor([input_ids], dtype=torch.long)
+    device = infer_model_device(model)
+    x = torch.tensor([input_ids], dtype=torch.long, device=device)
     beams = [BeamState(token_ids=(), prediction_ids=(bos_id,), score=0.0)]
 
     for input_step in range(len(input_ids)):
@@ -70,7 +72,11 @@ def beam_search_decode(
         for _symbol_step in range(max_symbols_per_step):
             emitted: list[BeamState] = []
             for beam in active:
-                y = torch.tensor([list(beam.prediction_ids)], dtype=torch.long)
+                y = torch.tensor(
+                    [list(beam.prediction_ids)],
+                    dtype=torch.long,
+                    device=device,
+                )
                 logits = model(x, y)
                 log_probs = torch.log_softmax(
                     logits[0, input_step, len(beam.prediction_ids) - 1],

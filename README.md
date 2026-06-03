@@ -86,6 +86,20 @@ python -m train.train \
   --learning-rate 0.001
 ```
 
+validation中にdecodeしてCERも確認できます。`greedy` は軽く、`beam` は重いのでサンプル数と頻度を制限します。
+
+```bash
+python -m train.train \
+  --data data/combined/aozora/train.jsonl \
+  --valid-data data/combined/aozora/valid.jsonl \
+  --output-dir artifacts/aozora-rnnt-v1 \
+  --epochs 100 \
+  --device cuda \
+  --valid-decode greedy \
+  --valid-cer-samples 100 \
+  --valid-cer-every 5
+```
+
 学習成果物は `artifacts/run1/` 以下に保存されます。
 
 途中から再開する場合:

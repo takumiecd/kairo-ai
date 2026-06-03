@@ -18,6 +18,8 @@ from dataset.vocab import build_output_vocab
 class EncodedExample:
     input_ids: list[int]
     target_ids: list[int]
+    input_text: str
+    target_text: str
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,8 @@ def encode_records(
             EncodedExample(
                 input_ids=vocabs.input_vocab.encode(record["input"]),
                 target_ids=vocabs.output_vocab.encode(record["target"]),
+                input_text=record["input"],
+                target_text=record["target"],
             )
             for record in records
         ]
