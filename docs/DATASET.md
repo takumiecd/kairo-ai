@@ -72,6 +72,32 @@ For practical training, target at least tens of thousands of generated examples
 first, then scale toward hundreds of thousands. Increase the number of Aozora
 sources and prefer `augmentations=1` or `2` until validation CER is being tracked.
 
+## Tatoeba
+
+Tatoeba sentence downloads use tab-separated rows:
+
+```text
+Sentence id [tab] Lang [tab] Text
+```
+
+Download `sentences.csv` or `sentences.tar.bz2` from Tatoeba, then extract Japanese
+sentences:
+
+```bash
+python -m dataset.source_tatoeba \
+  --sentences data/raw/tatoeba/sentences.tar.bz2 \
+  --output data/external/tatoeba_ja.jsonl \
+  --lang jpn \
+  --source-detail "Tatoeba Japanese sentences" \
+  --license cc_by_2_0_fr \
+  --max-units 50000 \
+  --augmentations 1 \
+  --manifest data/external/tatoeba_ja.manifest.json
+```
+
+Tatoeba text is generally under CC BY 2.0 FR, so keep attribution metadata in
+the generated manifest.
+
 Preview examples without writing a file:
 
 ```bash

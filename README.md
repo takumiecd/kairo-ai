@@ -61,6 +61,17 @@ python -m dataset.source_manifest \
   --combined-output data/combined/aozora_all.jsonl
 ```
 
+Tatoebaの短文データも取り込めます。
+
+```bash
+python -m dataset.source_tatoeba \
+  --sentences data/raw/tatoeba/sentences.tar.bz2 \
+  --output data/external/tatoeba_ja.jsonl \
+  --lang jpn \
+  --max-units 50000 \
+  --augmentations 1
+```
+
 ## 🏋️ Train Smoke Test
 生成した JSONL で、RNN-T loss と backward が通ることを確認します。小さい subset に絞ると、overfit できるかも確認できます。
 
