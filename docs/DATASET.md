@@ -23,6 +23,21 @@ python -m dataset.split \
   --test-ratio 0.1
 ```
 
+Build examples from an external Aozora-style text or zip source:
+
+```bash
+python -m dataset.source_text \
+  --source https://www.aozora.gr.jp/cards/000148/files/789_ruby_5639.zip \
+  --output data/external/aozora_wagahai.jsonl \
+  --source-name aozora \
+  --source-detail "Natsume Soseki: Wagahai wa Neko de Aru" \
+  --license aozora_public_domain_checked \
+  --format aozora \
+  --max-units 200 \
+  --augmentations 2 \
+  --manifest data/external/aozora_wagahai.manifest.json
+```
+
 Preview examples without writing a file:
 
 ```bash

@@ -41,6 +41,17 @@ python -m dataset.split --input data/synthetic.jsonl --output-dir data/synthetic
 
 生成器は日本語spanをローマ字化し、コマンド・パス・識別子を保持しつつ、日本語由来のromajiと一部の英語spanにtypo/noiseを追加します。詳細は [`docs/DATASET.md`](docs/DATASET.md) を参照してください。
 
+外部テキストは、明示したURLまたはローカルファイルから取り込みます。まずは青空文庫形式のテキスト/zipを対象にします。
+
+```bash
+python -m dataset.source_text \
+  --source https://www.aozora.gr.jp/cards/000148/files/789_ruby_5639.zip \
+  --output data/external/aozora_wagahai.jsonl \
+  --source-name aozora \
+  --license aozora_public_domain_checked \
+  --format aozora
+```
+
 ## 🏋️ Train Smoke Test
 生成した JSONL で、RNN-T loss と backward が通ることを確認します。小さい subset に絞ると、overfit できるかも確認できます。
 
