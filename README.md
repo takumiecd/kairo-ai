@@ -48,6 +48,8 @@ python -m dataset.generate --output data/synthetic.jsonl --augmentations 1
 python -m train.overfit --data data/synthetic.jsonl --steps 30 --batch-size 2 --embed-dim 16 --hidden-dim 32 --learning-rate 0.01 --max-examples 4 --eval-every 10
 ```
 
+評価指標として、文字列同士の CER(Character Error Rate) を `eval.metrics` に用意しています。decode実装後は予測文字列とtargetの比較に使います。
+
 ## 📜 ライセンスとデータ方針
 このリポジトリのソースコードは MIT License で公開します。
 
