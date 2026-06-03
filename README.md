@@ -40,6 +40,14 @@ python -m dataset.generate --output data/synthetic.jsonl --augmentations 4 --sho
 
 生成器は日本語spanをローマ字化し、コマンド・パス・識別子を保持しつつ、日本語由来のromajiと一部の英語spanにtypo/noiseを追加します。詳細は [`docs/DATASET.md`](docs/DATASET.md) を参照してください。
 
+## 🏋️ Train Smoke Test
+生成した JSONL で、RNN-T loss と backward が通ることを確認します。
+
+```bash
+python -m dataset.generate --output data/synthetic.jsonl --augmentations 1
+python -m train.overfit --data data/synthetic.jsonl --steps 3 --batch-size 2 --embed-dim 16 --hidden-dim 32
+```
+
 ## 📜 ライセンスとデータ方針
 このリポジトリのソースコードは MIT License で公開します。
 
