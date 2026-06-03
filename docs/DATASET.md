@@ -38,6 +38,36 @@ python -m dataset.source_text \
   --manifest data/external/aozora_wagahai.manifest.json
 ```
 
+For many Aozora sources, create a manifest and ingest all sources in one command:
+
+```bash
+cp docs/AOZORA_SOURCES.example.json data/aozora_sources.json
+```
+
+Edit `data/aozora_sources.json`, then run:
+
+```bash
+python -m dataset.source_manifest \
+  --manifest data/aozora_sources.json \
+  --output-dir data/external/aozora \
+  --combined-output data/combined/aozora_all.jsonl \
+  --max-units 1000 \
+  --augmentations 2 \
+  --seed 0
+```
+
+Then split the combined output:
+
+```bash
+python -m dataset.split \
+  --input data/combined/aozora_all.jsonl \
+  --output-dir data/combined/aozora \
+  --train-ratio 0.8 \
+  --valid-ratio 0.1 \
+  --test-ratio 0.1 \
+  --seed 0
+```
+
 Preview examples without writing a file:
 
 ```bash

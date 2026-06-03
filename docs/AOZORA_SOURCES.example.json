@@ -1,0 +1,14 @@
+{
+  "sources": [
+    {
+      "source": "https://www.aozora.gr.jp/cards/000148/files/789_ruby_5639.zip",
+      "source_name": "aozora",
+      "source_detail": "Natsume Soseki: Wagahai wa Neko de Aru",
+      "license": "aozora_public_domain_checked",
+      "format": "aozora",
+      "output_name": "natsume_soseki_wagahai",
+      "max_units": 1000,
+      "augmentations": 2
+    }
+  ]
+}

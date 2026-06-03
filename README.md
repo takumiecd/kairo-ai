@@ -52,6 +52,15 @@ python -m dataset.source_text \
   --format aozora
 ```
 
+複数作品をまとめて取り込む場合は、`docs/AOZORA_SOURCES.example.json` を元にURL一覧を作り、manifest ingestを使います。
+
+```bash
+python -m dataset.source_manifest \
+  --manifest data/aozora_sources.json \
+  --output-dir data/external/aozora \
+  --combined-output data/combined/aozora_all.jsonl
+```
+
 ## 🏋️ Train Smoke Test
 生成した JSONL で、RNN-T loss と backward が通ることを確認します。小さい subset に絞ると、overfit できるかも確認できます。
 
