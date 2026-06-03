@@ -26,3 +26,8 @@
 ```bash
 uv pip install -r pyproject.toml
 ```
+
+## 📜 ライセンスとデータ方針
+このリポジトリのソースコードは MIT License で公開します。
+
+データセット、学習済みモデル、外部コーパス由来の成果物、ユーザーの個人学習データは、ソースコードとは分けて扱います。詳細は [`docs/DATA_POLICY.md`](docs/DATA_POLICY.md) を参照してください。
