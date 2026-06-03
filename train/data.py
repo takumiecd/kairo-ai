@@ -97,9 +97,19 @@ def load_dataset_and_vocabs(path: Path) -> tuple[JsonlTransducerDataset, Trainin
 def load_train_valid_datasets_and_vocabs(
     train_path: Path,
     valid_path: Path | None,
+    max_len: int | None = None,
 ) -> tuple[JsonlTransducerDataset, JsonlTransducerDataset | None, TrainingVocabs]:
     train_records = load_jsonl_examples(train_path)
     valid_records = load_jsonl_examples(valid_path) if valid_path is not None else []
+    if max_len is not None:
+        train_records = [
+            r for r in train_records
+            if len(r["input"]) <= max_len and len(r["target"]) <= max_len
+        ]
+        valid_records = [
+            r for r in valid_records
+            if len(r["input"]) <= max_len and len(r["target"]) <= max_len
+        ]
     vocabs = build_vocabs_from_records(train_records + valid_records)
     train_dataset = encode_records(train_records, vocabs)
     valid_dataset = encode_records(valid_records, vocabs) if valid_path is not None else None

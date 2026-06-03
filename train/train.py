@@ -47,6 +47,7 @@ class TrainConfig:
     valid_cer_every: int
     valid_beam_width: int
     valid_expansion_width: int
+    max_len: int | None
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,6 +91,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--valid-cer-every", type=int, default=1)
     parser.add_argument("--valid-beam-width", type=int, default=5)
     parser.add_argument("--valid-expansion-width", type=int, default=5)
+    parser.add_argument(
+        "--max-len",
+        type=int,
+        default=None,
+        help="Filter out examples where input or target length exceeds this limit.",
+    )
     return parser.parse_args()
 
 
@@ -170,6 +177,7 @@ def main() -> None:
     dataset, explicit_valid_dataset, vocabs = load_train_valid_datasets_and_vocabs(
         args.data,
         args.valid_data,
+        max_len=args.max_len,
     )
     if args.limit_examples is not None:
         dataset = Subset(dataset, range(min(args.limit_examples, len(dataset))))
@@ -216,6 +224,7 @@ def main() -> None:
         valid_cer_every=args.valid_cer_every,
         valid_beam_width=args.valid_beam_width,
         valid_expansion_width=args.valid_expansion_width,
+        max_len=args.max_len,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_json(args.output_dir / "config.json", asdict(config))
