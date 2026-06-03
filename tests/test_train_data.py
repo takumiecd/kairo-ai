@@ -3,6 +3,8 @@ import unittest
 from train.data import build_vocabs_from_records
 from train.data import collate_transducer_batch
 from train.data import encode_records
+from train.data import load_train_valid_datasets_and_vocabs
+from dataset.split import write_jsonl
 
 
 class TrainDataTest(unittest.TestCase):
@@ -28,6 +30,25 @@ class TrainDataTest(unittest.TestCase):
         self.assertTrue((batch["prediction_inputs"][:, 0] == vocabs.bos_id).all())
         self.assertEqual(str(batch["targets"].dtype), "torch.int32")
         self.assertEqual(vocabs.blank_id, 1)
+
+    def test_load_train_valid_datasets_builds_shared_vocab(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            train_path = Path(tmpdir) / "train.jsonl"
+            valid_path = Path(tmpdir) / "valid.jsonl"
+            write_jsonl(train_path, [{"input": "abc", "target": "修正"}])
+            write_jsonl(valid_path, [{"input": "xyz", "target": "確認"}])
+
+            train_dataset, valid_dataset, vocabs = load_train_valid_datasets_and_vocabs(
+                train_path,
+                valid_path,
+            )
+
+        self.assertEqual(len(train_dataset), 1)
+        self.assertEqual(len(valid_dataset), 1)
+        self.assertIn("確", vocabs.output_vocab.token_to_id)
 
 
 if __name__ == "__main__":

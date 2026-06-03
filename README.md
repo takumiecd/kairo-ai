@@ -76,7 +76,8 @@ checkpoint、config、vocab を保存する通常の学習 entrypoint です。
 
 ```bash
 python -m train.train \
-  --data data/synthetic.jsonl \
+  --data data/synthetic/train.jsonl \
+  --valid-data data/synthetic/valid.jsonl \
   --output-dir artifacts/run1 \
   --epochs 5 \
   --batch-size 4 \
@@ -92,6 +93,7 @@ python -m train.train \
 ```bash
 python -m train.train \
   --data data/synthetic/train.jsonl \
+  --valid-data data/synthetic/valid.jsonl \
   --output-dir artifacts/run1 \
   --epochs 20 \
   --resume artifacts/run1/checkpoints/epoch_010.pt

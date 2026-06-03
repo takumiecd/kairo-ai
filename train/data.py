@@ -90,6 +90,18 @@ def load_dataset_and_vocabs(path: Path) -> tuple[JsonlTransducerDataset, Trainin
     return encode_records(records, vocabs), vocabs
 
 
+def load_train_valid_datasets_and_vocabs(
+    train_path: Path,
+    valid_path: Path | None,
+) -> tuple[JsonlTransducerDataset, JsonlTransducerDataset | None, TrainingVocabs]:
+    train_records = load_jsonl_examples(train_path)
+    valid_records = load_jsonl_examples(valid_path) if valid_path is not None else []
+    vocabs = build_vocabs_from_records(train_records + valid_records)
+    train_dataset = encode_records(train_records, vocabs)
+    valid_dataset = encode_records(valid_records, vocabs) if valid_path is not None else None
+    return train_dataset, valid_dataset, vocabs
+
+
 def collate_transducer_batch(
     examples: list[EncodedExample],
     vocabs: TrainingVocabs,

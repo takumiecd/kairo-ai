@@ -18,7 +18,7 @@ from train.checkpoint import save_vocabs
 from train.checkpoint import write_json
 from train.checkpoint import load_checkpoint
 from train.data import collate_transducer_batch
-from train.data import load_dataset_and_vocabs
+from train.data import load_train_valid_datasets_and_vocabs
 from train.loss import compute_rnnt_loss
 from train.loss import evaluate_average_loss
 from train.loss import move_batch_to_device
@@ -27,6 +27,7 @@ from train.loss import move_batch_to_device
 @dataclass(frozen=True)
 class TrainConfig:
     data: str
+    valid_data: str | None
     output_dir: str
     epochs: int
     batch_size: int
@@ -45,6 +46,12 @@ class TrainConfig:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path, required=True)
+    parser.add_argument(
+        "--valid-data",
+        type=Path,
+        default=None,
+        help="Optional explicit validation JSONL. Disables internal validation split.",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=4)
@@ -144,15 +151,27 @@ def main() -> None:
             f"hidden_dim={args.hidden_dim}"
         )
 
-    dataset, vocabs = load_dataset_and_vocabs(args.data)
+    dataset, explicit_valid_dataset, vocabs = load_train_valid_datasets_and_vocabs(
+        args.data,
+        args.valid_data,
+    )
     if args.limit_examples is not None:
         dataset = Subset(dataset, range(min(args.limit_examples, len(dataset))))
+        if explicit_valid_dataset is not None:
+            explicit_valid_dataset = Subset(
+                explicit_valid_dataset,
+                range(min(args.limit_examples, len(explicit_valid_dataset))),
+            )
 
-    train_dataset, valid_dataset = split_dataset(
-        dataset,
-        validation_ratio=args.validation_ratio,
-        seed=args.seed,
-    )
+    if explicit_valid_dataset is None:
+        train_dataset, valid_dataset = split_dataset(
+            dataset,
+            validation_ratio=args.validation_ratio,
+            seed=args.seed,
+        )
+    else:
+        train_dataset = dataset
+        valid_dataset = explicit_valid_dataset
     train_loader = build_loader(train_dataset, vocabs, args.batch_size, shuffle=True)
     valid_loader = (
         build_loader(valid_dataset, vocabs, args.batch_size, shuffle=False)
@@ -162,6 +181,7 @@ def main() -> None:
 
     config = TrainConfig(
         data=str(args.data),
+        valid_data=str(args.valid_data) if args.valid_data else None,
         output_dir=str(args.output_dir),
         epochs=args.epochs,
         batch_size=args.batch_size,
