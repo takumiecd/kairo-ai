@@ -98,6 +98,24 @@ python -m dataset.source_tatoeba \
 Tatoeba text is generally under CC BY 2.0 FR, so keep attribution metadata in
 the generated manifest.
 
+## Wikipedia
+
+Download a Japanese Wikipedia pages/articles dump, then extract article text:
+
+```bash
+python -m dataset.source_wikipedia \
+  --dump data/raw/wiki/jawiki-latest-pages-articles.xml.bz2 \
+  --output data/external/wiki_ja.jsonl \
+  --source-detail "Japanese Wikipedia pages/articles dump" \
+  --license cc_by_sa_gfdl \
+  --max-units 100000 \
+  --augmentations 1 \
+  --manifest data/external/wiki_ja.manifest.json
+```
+
+The extractor streams the XML dump, skips redirects and non-article namespaces,
+removes common wiki markup, and keeps attribution/license metadata in the manifest.
+
 Preview examples without writing a file:
 
 ```bash

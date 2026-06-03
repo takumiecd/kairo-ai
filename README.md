@@ -72,6 +72,17 @@ python -m dataset.source_tatoeba \
   --augmentations 1
 ```
 
+Wikipedia dumpから現代語・固有名詞・技術語を増やせます。
+
+```bash
+python -m dataset.source_wikipedia \
+  --dump data/raw/wiki/jawiki-latest-pages-articles.xml.bz2 \
+  --output data/external/wiki_ja.jsonl \
+  --license cc_by_sa_gfdl \
+  --max-units 100000 \
+  --augmentations 1
+```
+
 ## 🏋️ Train Smoke Test
 生成した JSONL で、RNN-T loss と backward が通ることを確認します。小さい subset に絞ると、overfit できるかも確認できます。
 
