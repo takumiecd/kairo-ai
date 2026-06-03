@@ -38,7 +38,13 @@ def evaluate_decode_cer(
     references: list[str] = []
 
     model.eval()
-    for index in selected_indexes:
+    try:
+        from tqdm import tqdm
+        iterable = tqdm(selected_indexes, desc=f"Validating ({decoder})", leave=False)
+    except ImportError:
+        iterable = selected_indexes
+
+    for index in iterable:
         example = base_dataset[index]
         if decoder == "greedy":
             prediction = greedy_decode(

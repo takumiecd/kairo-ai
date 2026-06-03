@@ -251,9 +251,22 @@ def main() -> None:
 
     best_valid_loss = load_best_valid_loss(args.output_dir)
     for epoch in range(start_epoch, args.epochs + 1):
+        print(f"Epoch {epoch}/{args.epochs} started. Training on {len(train_loader)} batches...")
         model.train()
         train_losses: list[float] = []
-        for batch in train_loader:
+        
+        try:
+            from tqdm import tqdm
+            has_tqdm = True
+        except ImportError:
+            has_tqdm = False
+
+        if has_tqdm:
+            pbar = tqdm(train_loader, desc=f"Epoch {epoch}", leave=True)
+        else:
+            pbar = train_loader
+
+        for i, batch in enumerate(pbar):
             batch = move_batch_to_device(batch, device)
             optimizer.zero_grad(set_to_none=True)
             loss = compute_rnnt_loss(model, batch, vocabs.blank_id)
@@ -261,7 +274,12 @@ def main() -> None:
             if args.gradient_clip > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.gradient_clip)
             optimizer.step()
-            train_losses.append(float(loss.item()))
+            loss_val = float(loss.item())
+            train_losses.append(loss_val)
+            if has_tqdm:
+                pbar.set_postfix(loss=f"{loss_val:.4f}")
+            elif i % 50 == 0:
+                print(f"  Batch {i}/{len(train_loader)}: loss={loss_val:.4f}")
 
         train_loss = sum(train_losses) / len(train_losses)
         valid_loss = (
