@@ -248,7 +248,7 @@ def main() -> None:
         lr=args.learning_rate,
         weight_decay=args.weight_decay,
     )
-    scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
+    scaler = torch.amp.GradScaler("cuda", enabled=args.amp)
 
     start_epoch = 1
     if resume_checkpoint is not None:
@@ -278,7 +278,7 @@ def main() -> None:
             batch = move_batch_to_device(batch, device)
             optimizer.zero_grad(set_to_none=True)
             
-            with torch.cuda.amp.autocast(enabled=args.amp):
+            with torch.amp.autocast("cuda", enabled=args.amp):
                 loss = compute_rnnt_loss(model, batch, vocabs.blank_id)
                 
             scaler.scale(loss).backward()
