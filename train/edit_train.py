@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 from dataclasses import dataclass
+import json
 import random
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from train.edit_loss import compute_edit_loss
 from train.edit_loss import evaluate_average_edit_loss
 from train.edit_validation import evaluate_edit_decode_cer
 from train.loss import move_batch_to_device
+from train.train import plot_metrics
 from train.train import select_device
 from train.train import split_dataset
 
@@ -210,9 +212,22 @@ def main() -> None:
 
     best_valid_loss = float("inf")
     for epoch in range(start_epoch, args.epochs + 1):
+        print(f"Epoch {epoch}/{args.epochs} started. Training on {len(train_loader)} batches...")
         model.train()
         train_losses: list[float] = []
-        for batch in train_loader:
+
+        try:
+            from tqdm import tqdm
+            has_tqdm = True
+        except ImportError:
+            has_tqdm = False
+
+        if has_tqdm:
+            pbar = tqdm(train_loader, desc=f"Edit Epoch {epoch}", leave=True)
+        else:
+            pbar = train_loader
+
+        for i, batch in enumerate(pbar):
             batch = move_batch_to_device(batch, device)
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=amp_enabled):
@@ -227,7 +242,12 @@ def main() -> None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.gradient_clip)
             scaler.step(optimizer)
             scaler.update()
-            train_losses.append(float(loss.item()))
+            loss_val = float(loss.item())
+            train_losses.append(loss_val)
+            if has_tqdm:
+                pbar.set_postfix(loss=f"{loss_val:.4f}")
+            elif i % 50 == 0:
+                print(f"  Batch {i}/{len(train_loader)}: loss={loss_val:.4f}")
 
         train_loss = sum(train_losses) / len(train_losses)
         valid_loss = (
@@ -291,6 +311,17 @@ def main() -> None:
                 valid_loss,
                 config,
             )
+
+        metrics_record = {
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "valid_loss": valid_loss,
+        }
+        if valid_cer is not None:
+            metrics_record["valid_cer"] = valid_cer
+        with (args.output_dir / "metrics.jsonl").open("a", encoding="utf-8") as file:
+            file.write(json.dumps(metrics_record) + "\n")
+        plot_metrics(args.output_dir)
 
 
 if __name__ == "__main__":
