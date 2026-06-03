@@ -31,6 +31,15 @@ python -m pip install .
 python -m unittest discover -s tests
 ```
 
+## 🧪 データセット生成
+まずはエンジニア向けの synthetic examples から、ローマ字入力と漢字かな混じり出力の JSONL を生成します。
+
+```bash
+python -m dataset.generate --output data/synthetic.jsonl --augmentations 4 --show-vocab
+```
+
+生成器は日本語spanをローマ字化し、コマンド・パス・識別子を保持しつつ、日本語由来のromajiと一部の英語spanにtypo/noiseを追加します。詳細は [`docs/DATASET.md`](docs/DATASET.md) を参照してください。
+
 ## 📜 ライセンスとデータ方針
 このリポジトリのソースコードは MIT License で公開します。
 

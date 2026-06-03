@@ -1,0 +1,128 @@
+# Dataset Generation
+
+Kairo AI starts with synthetic engineer-focused examples before adding external
+corpora. The goal is to make the training data match the IME product: mixed
+Japanese, English, commands, paths, identifiers, and typing mistakes.
+
+## Quick Start
+
+Generate examples from the built-in synthetic templates:
+
+```bash
+python -m dataset.generate --output data/synthetic.jsonl --augmentations 4 --show-vocab
+```
+
+Preview examples without writing a file:
+
+```bash
+python -m dataset.generate --augmentations 2 --show-vocab
+```
+
+Disable typo noise for mutable English spans:
+
+```bash
+python -m dataset.generate --no-noise-literals
+```
+
+## Output Format
+
+The generator writes JSONL records:
+
+```json
+{
+  "source": "synthetic",
+  "source_detail": "engineer_templates",
+  "license": "project_owned",
+  "input": "git commit -m \"baguwoshuuseishita\"",
+  "target": "git commit -m \"バグを修正した\"",
+  "clean_input": "git commit -m \"baguwoshuuseishita\"",
+  "noise": "none"
+}
+```
+
+Fields:
+
+- `source`: broad data source category.
+- `source_detail`: specific source or generator name.
+- `license`: source/license label for auditability.
+- `input`: romanized/noisy IME input string.
+- `target`: expected mixed Japanese/ASCII output string.
+- `clean_input`: non-noisy input generated from the target.
+- `noise`: applied noise type, or `none`.
+
+## Current Pipeline
+
+1. Start from synthetic target text.
+2. Split mixed text into Japanese and literal spans.
+3. Convert only Japanese spans to romaji.
+4. Preserve command/path/identifier-like literal spans.
+5. Apply noise to Japanese-derived romaji spans and mutable English spans.
+6. Emit clean and noisy training examples.
+7. Build character-level input/output vocabularies from generated examples.
+
+Example:
+
+```text
+target:
+git commit -m "バグを修正した"
+
+clean input:
+git commit -m "baguwoshuuseishita"
+
+noisy inputs:
+git commit -m "baguuwoshuuseishita"
+git commit -m "baguwosyuuseishita"
+git commit -m "baguwohsuuseishita"
+```
+
+## Literal Noise
+
+Kairo should tolerate typos in both Japanese romaji and English. The generator
+therefore applies typing noise to mutable English spans by default.
+
+Protected literal spans include:
+
+- common command words such as `git`, `commit`, `cargo`, `docker`, and `pytest`
+- flags such as `-m`
+- paths such as `src/main.rs`
+- identifiers such as `user_id`
+
+Mutable English spans can still receive noise. For example, `tokenizer` or
+`README` may become typo variants in noisy examples.
+
+## Noise Types
+
+The current generator supports:
+
+- QWERTY-adjacent typo
+- deletion
+- duplication
+- adjacent character swap
+- romaji variants such as `shi`/`si`, `shu`/`syu`, `wo`/`o`
+
+## Vocab
+
+The first training phase uses character-level vocabularies:
+
+- input vocab: `<pad>`, `<unk>`, ASCII input characters
+- output vocab: `<pad>`, `<blank>`, `<bos>`, `<unk>`, Japanese characters, ASCII characters
+
+Learned tokenizers such as SentencePiece/BPE are intentionally delayed until
+the RNN-T training and decoding pipeline is working.
+
+## External Corpora
+
+External corpora should be added after the synthetic pipeline is stable.
+
+Initial preferred sources:
+
+- project-owned synthetic examples
+- public-domain or clearly reusable Japanese texts
+- Aozora Bunko texts after checking per-text copyright and usage notes
+
+Wikipedia dumps may be evaluated later, but attribution and license handling
+must be tracked before publishing derived datasets or model artifacts.
+
+Avoid arbitrary web scraping in the initial project.
+
+See `docs/DATA_POLICY.md` for the broader data and license policy.
