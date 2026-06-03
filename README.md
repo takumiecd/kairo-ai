@@ -36,6 +36,7 @@ python -m unittest discover -s tests
 
 ```bash
 python -m dataset.generate --output data/synthetic.jsonl --augmentations 4 --show-vocab
+python -m dataset.split --input data/synthetic.jsonl --output-dir data/synthetic
 ```
 
 生成器は日本語spanをローマ字化し、コマンド・パス・識別子を保持しつつ、日本語由来のromajiと一部の英語spanにtypo/noiseを追加します。詳細は [`docs/DATASET.md`](docs/DATASET.md) を参照してください。

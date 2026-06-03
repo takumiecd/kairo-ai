@@ -12,6 +12,17 @@ Generate examples from the built-in synthetic templates:
 python -m dataset.generate --output data/synthetic.jsonl --augmentations 4 --show-vocab
 ```
 
+Split generated examples into train/valid/test files:
+
+```bash
+python -m dataset.split \
+  --input data/synthetic.jsonl \
+  --output-dir data/synthetic \
+  --train-ratio 0.8 \
+  --valid-ratio 0.1 \
+  --test-ratio 0.1
+```
+
 Preview examples without writing a file:
 
 ```bash
@@ -59,6 +70,7 @@ Fields:
 5. Apply noise to Japanese-derived romaji spans and mutable English spans.
 6. Emit clean and noisy training examples.
 7. Build character-level input/output vocabularies from generated examples.
+8. Split generated JSONL into train/valid/test files before training.
 
 Example:
 
