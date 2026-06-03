@@ -10,6 +10,7 @@ from train.checkpoint import save_checkpoint
 from train.train import select_device
 from train.train import split_dataset
 from train.train import load_best_valid_loss
+from train.train import get_resume_model_dims
 
 
 class TrainEntrypointTest(unittest.TestCase):
@@ -56,6 +57,24 @@ class TrainEntrypointTest(unittest.TestCase):
 
         self.assertEqual(state["epoch"], 3)
         self.assertEqual(state["valid_loss"], 1.0)
+
+    def test_resume_model_dims_prefers_checkpoint_config(self):
+        checkpoint = {
+            "config": {"embed_dim": 128, "hidden_dim": 256},
+            "model_state_dict": {},
+        }
+
+        self.assertEqual(get_resume_model_dims(checkpoint), (128, 256))
+
+    def test_resume_model_dims_can_infer_from_state_dict(self):
+        checkpoint = {
+            "model_state_dict": {
+                "encoder_emb.weight": torch.zeros(50, 128),
+                "encoder_lstm.weight_hh_l0": torch.zeros(1024, 256),
+            }
+        }
+
+        self.assertEqual(get_resume_model_dims(checkpoint), (128, 256))
 
 
 if __name__ == "__main__":

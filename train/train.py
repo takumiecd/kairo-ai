@@ -118,11 +118,31 @@ def load_best_valid_loss(output_dir: Path) -> float:
     return float(state.get("valid_loss", float("inf")))
 
 
+def get_resume_model_dims(checkpoint: dict) -> tuple[int, int]:
+    config = checkpoint.get("config") or {}
+    if "embed_dim" in config and "hidden_dim" in config:
+        return int(config["embed_dim"]), int(config["hidden_dim"])
+
+    state_dict = checkpoint["model_state_dict"]
+    embed_dim = int(state_dict["encoder_emb.weight"].shape[1])
+    hidden_dim = int(state_dict["encoder_lstm.weight_hh_l0"].shape[1])
+    return embed_dim, hidden_dim
+
+
 def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     device = select_device(args.device)
+    resume_checkpoint = (
+        load_checkpoint(args.resume, map_location=device) if args.resume else None
+    )
+    if resume_checkpoint is not None:
+        args.embed_dim, args.hidden_dim = get_resume_model_dims(resume_checkpoint)
+        print(
+            f"resume_model_dims embed_dim={args.embed_dim} "
+            f"hidden_dim={args.hidden_dim}"
+        )
 
     dataset, vocabs = load_dataset_and_vocabs(args.data)
     if args.limit_examples is not None:
@@ -173,11 +193,10 @@ def main() -> None:
     )
 
     start_epoch = 1
-    if args.resume:
-        checkpoint = load_checkpoint(args.resume, map_location=device)
-        model.load_state_dict(checkpoint["model_state_dict"])
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        start_epoch = int(checkpoint["epoch"]) + 1
+    if resume_checkpoint is not None:
+        model.load_state_dict(resume_checkpoint["model_state_dict"])
+        optimizer.load_state_dict(resume_checkpoint["optimizer_state_dict"])
+        start_epoch = int(resume_checkpoint["epoch"]) + 1
         print(f"resumed_from={args.resume} start_epoch={start_epoch}")
 
     best_valid_loss = load_best_valid_loss(args.output_dir)
