@@ -1,59 +1,126 @@
-import pykakasi
-from sudachipy import tokenizer
-from sudachipy import dictionary
+"""Generate Kairo AI training examples."""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import asdict
+from dataclasses import dataclass
+import json
+from pathlib import Path
+
+from dataset.examples import SYNTHETIC_EXAMPLES
+from dataset.noise import InputNoiser
+from dataset.reading import JapaneseRomajiConverter
+from dataset.vocab import build_input_vocab
+from dataset.vocab import build_output_vocab
+
+
+@dataclass(frozen=True)
+class TrainingExample:
+    source: str
+    source_detail: str
+    license: str
+    input: str
+    target: str
+    clean_input: str
+    noise: str
+
 
 class DatasetGenerator:
-    """
-    既存の日本語テキスト（例：「私は昨日ピザを食べた」）から、
-    タイピング時のローマ字入力（例：「watashihakinoupizawotabeta」）を自動生成するクラス。
-    """
-    def __init__(self):
-        # 形態素解析器 (漢字 -> 読み)
-        self.tokenizer_obj = dictionary.Dictionary().create()
-        self.mode = tokenizer.Tokenizer.SplitMode.C
-        
-        # ローマ字変換器 (読み -> ローマ字)
-        self.kks = pykakasi.kakasi()
-        
-    def generate_pair(self, text: str):
-        """
-        Input: "私は昨日、AppleのMacBookを買いました。"
-        Output: ("watashihakinou、ApplenoMacBookwokaimashita。", "私は昨日、AppleのMacBookを買いました。")
-        """
-        # 1. 形態素解析で「読み」を取得
-        tokens = self.tokenizer_obj.tokenize(text, self.mode)
-        
-        romaji_parts = []
-        for token in tokens:
-            surface = token.surface()
-            reading = token.reading_form()
-            
-            # 英単語などは読みが取得できない、または元の文字を維持したいケースがある
-            # 簡単なヒューリスティック：読みが存在すればよみがなを、なければ表層をそのまま使う
-            target_text = reading if reading else surface
-            
-            # カタカナ/ひらがなをローマ字に変換
-            conv_result = self.kks.convert(target_text)
-            for item in conv_result:
-                # pykakasiは辞書で {orig, hira, kana, hepburn} などを返す
-                romaji_parts.append(item['hepburn'])
-                
-        input_romaji = "".join(romaji_parts)
-        
-        return input_romaji, text
+    def __init__(self, seed: int = 0) -> None:
+        self.converter = JapaneseRomajiConverter()
+        self.noiser = InputNoiser(seed=seed)
+
+    def generate_pair(self, text: str) -> tuple[str, str]:
+        return self.converter.convert_text(text), text
+
+    def generate_input_segments(self, text: str) -> list[tuple[str, bool]]:
+        return [
+            (span.input, span.kind == "japanese")
+            for span in self.converter.convert_spans(text)
+        ]
+
+    def generate_examples(
+        self,
+        texts: list[str],
+        num_augmentations: int = 2,
+        source: str = "synthetic",
+        source_detail: str = "engineer_templates",
+        license_name: str = "project_owned",
+    ) -> list[TrainingExample]:
+        examples: list[TrainingExample] = []
+        for text in texts:
+            target = text
+            input_segments = self.generate_input_segments(text)
+            clean_input = "".join(segment for segment, _mutable in input_segments)
+            for noisy_input in self.noiser.augment_segments(
+                input_segments,
+                num_augmentations,
+            ):
+                examples.append(
+                    TrainingExample(
+                        source=source,
+                        source_detail=source_detail,
+                        license=license_name,
+                        input=noisy_input.text,
+                        target=target,
+                        clean_input=clean_input,
+                        noise=noisy_input.noise,
+                    )
+                )
+        return examples
+
+
+def write_jsonl(path: Path, examples: list[TrainingExample]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as file:
+        for example in examples:
+            file.write(json.dumps(asdict(example), ensure_ascii=False) + "\n")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional JSONL output path. Prints examples when omitted.",
+    )
+    parser.add_argument(
+        "--augmentations",
+        type=int,
+        default=2,
+        help="Number of noisy variants to add per clean example.",
+    )
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--show-vocab",
+        action="store_true",
+        help="Print generated input/output char vocab sizes.",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    generator = DatasetGenerator(seed=args.seed)
+    examples = generator.generate_examples(
+        SYNTHETIC_EXAMPLES,
+        num_augmentations=args.augmentations,
+    )
+
+    if args.output:
+        write_jsonl(args.output, examples)
+    else:
+        for example in examples[:10]:
+            print(json.dumps(asdict(example), ensure_ascii=False))
+
+    if args.show_vocab:
+        input_vocab = build_input_vocab([example.input for example in examples])
+        output_vocab = build_output_vocab([example.target for example in examples])
+        print(f"input_vocab_size={len(input_vocab.id_to_token)}")
+        print(f"output_vocab_size={len(output_vocab.id_to_token)}")
+
 
 if __name__ == "__main__":
-    generator = DatasetGenerator()
-    
-    # テスト
-    sample_texts = [
-        "私は昨日、AppleのMacBookを買いました。",
-        "git commit -m \"バグを修正した\"",
-        "こんにちは、世界！"
-    ]
-    
-    for txt in sample_texts:
-        x, y = generator.generate_pair(txt)
-        print(f"Target (Y) : {y}")
-        print(f"Input  (X) : {x}")
-        print("-" * 40)
+    main()

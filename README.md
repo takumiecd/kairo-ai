@@ -22,9 +22,13 @@
 - `tests/`: ユニットテスト。
 
 ## 🚀 環境構築
-[uv](https://github.com/astral-sh/uv) などのモダンなパッケージマネージャを利用して構築します。
+Anaconda/Miniconda で Python 3.11 環境を作成します。
+
 ```bash
-uv pip install -r pyproject.toml
+conda create -y -n kairo-ai python=3.11 pip
+conda activate kairo-ai
+python -m pip install .
+python -m unittest discover -s tests
 ```
 
 ## 📜 ライセンスとデータ方針
