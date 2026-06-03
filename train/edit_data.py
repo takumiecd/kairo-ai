@@ -165,6 +165,16 @@ def encode_edit_records(
 
 def load_edit_dataset_and_vocabs(path) -> tuple[JsonlEditDataset, TrainingVocabs]:
     records = load_jsonl_examples(path)
+    vocabs = build_edit_vocabs_from_records(records)
+    return encode_edit_records(records, vocabs), vocabs
+
+
+def build_edit_vocabs_from_records(
+    records: list[dict[str, str]],
+    output_tokenizer: str = "char",
+    output_vocab_size: int = 4000,
+    output_min_token_frequency: int = 2,
+) -> TrainingVocabs:
     vocab_records = [
         {
             "input": record["input"],
@@ -172,8 +182,32 @@ def load_edit_dataset_and_vocabs(path) -> tuple[JsonlEditDataset, TrainingVocabs
         }
         for record in records
     ]
-    vocabs = build_vocabs_from_records(vocab_records)
-    return encode_edit_records(records, vocabs), vocabs
+    return build_vocabs_from_records(
+        vocab_records,
+        output_tokenizer=output_tokenizer,
+        output_vocab_size=output_vocab_size,
+        output_min_token_frequency=output_min_token_frequency,
+    )
+
+
+def load_train_valid_edit_datasets_and_vocabs(
+    train_path,
+    valid_path=None,
+    output_tokenizer: str = "char",
+    output_vocab_size: int = 4000,
+    output_min_token_frequency: int = 2,
+) -> tuple[JsonlEditDataset, JsonlEditDataset | None, TrainingVocabs]:
+    train_records = load_jsonl_examples(train_path)
+    valid_records = load_jsonl_examples(valid_path) if valid_path is not None else []
+    vocabs = build_edit_vocabs_from_records(
+        train_records + valid_records,
+        output_tokenizer=output_tokenizer,
+        output_vocab_size=output_vocab_size,
+        output_min_token_frequency=output_min_token_frequency,
+    )
+    train_dataset = encode_edit_records(train_records, vocabs)
+    valid_dataset = encode_edit_records(valid_records, vocabs) if valid_path is not None else None
+    return train_dataset, valid_dataset, vocabs
 
 
 def collate_edit_batch(
