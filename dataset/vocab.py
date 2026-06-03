@@ -41,3 +41,10 @@ def build_char_vocab(texts: list[str], special_tokens: list[str]) -> CharVocab:
     ]
     token_to_id = {token: index for index, token in enumerate(id_to_token)}
     return CharVocab(token_to_id=token_to_id, id_to_token=id_to_token)
+
+
+def vocab_from_token_to_id(token_to_id: dict[str, int]) -> CharVocab:
+    id_to_token = [""] * len(token_to_id)
+    for token, token_id in token_to_id.items():
+        id_to_token[token_id] = token
+    return CharVocab(token_to_id=dict(token_to_id), id_to_token=id_to_token)

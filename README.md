@@ -66,6 +66,27 @@ python -m train.train \
 
 学習成果物は `artifacts/run1/` 以下に保存されます。
 
+## 🔎 Greedy Decode
+学習済みartifactからモデルとvocabを復元し、greedy decodeで予測文字列を確認します。
+
+```bash
+python -m decode.greedy \
+  --artifact-dir artifacts/run1 \
+  --input 'git commit -m "baguwoshuuseishita"' \
+  --show-next-token-probs
+```
+
+初期段階の短い学習では出力品質より、checkpoint復元と推論経路が通ることを確認します。
+
+Beam searchで候補とbeam内confidenceを見る場合:
+
+```bash
+python -m decode.beam \
+  --artifact-dir artifacts/run1 \
+  --input 'git commit -m "baguwoshuuseishita"' \
+  --beam-width 5
+```
+
 ## 📜 ライセンスとデータ方針
 このリポジトリのソースコードは MIT License で公開します。
 
