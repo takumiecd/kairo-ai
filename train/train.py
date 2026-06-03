@@ -48,6 +48,7 @@ class TrainConfig:
     valid_beam_width: int
     valid_expansion_width: int
     max_len: int | None
+    amp: bool
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,6 +97,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Filter out examples where input or target length exceeds this limit.",
+    )
+    parser.add_argument(
+        "--amp",
+        action="store_true",
+        help="Use automatic mixed precision (AMP) for training.",
     )
     return parser.parse_args()
 
@@ -225,6 +231,7 @@ def main() -> None:
         valid_beam_width=args.valid_beam_width,
         valid_expansion_width=args.valid_expansion_width,
         max_len=args.max_len,
+        amp=args.amp,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_json(args.output_dir / "config.json", asdict(config))
@@ -241,6 +248,7 @@ def main() -> None:
         lr=args.learning_rate,
         weight_decay=args.weight_decay,
     )
+    scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
 
     start_epoch = 1
     if resume_checkpoint is not None:
@@ -269,11 +277,19 @@ def main() -> None:
         for i, batch in enumerate(pbar):
             batch = move_batch_to_device(batch, device)
             optimizer.zero_grad(set_to_none=True)
-            loss = compute_rnnt_loss(model, batch, vocabs.blank_id)
-            loss.backward()
+            
+            with torch.cuda.amp.autocast(enabled=args.amp):
+                loss = compute_rnnt_loss(model, batch, vocabs.blank_id)
+                
+            scaler.scale(loss).backward()
+            
             if args.gradient_clip > 0:
+                scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.gradient_clip)
-            optimizer.step()
+                
+            scaler.step(optimizer)
+            scaler.update()
+            
             loss_val = float(loss.item())
             train_losses.append(loss_val)
             if has_tqdm:

@@ -17,7 +17,7 @@ def move_batch_to_device(
 def compute_rnnt_loss(model, batch: dict[str, torch.Tensor], blank_id: int) -> torch.Tensor:
     logits = model(batch["inputs"], batch["prediction_inputs"])
     return F.rnnt_loss(
-        logits=logits,
+        logits=logits.float(),
         targets=batch["targets"],
         logit_lengths=batch["input_lengths"],
         target_lengths=batch["target_lengths"],
