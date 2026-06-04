@@ -156,6 +156,40 @@ python -m decode.beam \
   --beam-width 5
 ```
 
+## 🫧 Discrete Diffusion Experiment
+
+`train.diffusion.train` は、ローマ字入力・任意の前文 context・ノイズ化した
+出力 canvas を単一モデルで参照し、正解文を反復復元します。初期 canvas は
+予測長ぶんの `<mask>` なので、空の状態から非自己回帰で生成できます。
+
+小規模な学習確認:
+
+```bash
+python -m train.diffusion.train \
+  --data data/synthetic/train.jsonl \
+  --valid-data data/synthetic/valid.jsonl \
+  --output-dir artifacts/kairo-diffusion-v1 \
+  --epochs 20 \
+  --batch-size 16 \
+  --device cuda \
+  --diffusion-steps 8 \
+  --valid-decode greedy \
+  --valid-cer-samples 100
+```
+
+全 `<mask>` から反復 decode:
+
+```bash
+python -m decode.diffusion \
+  --artifact-dir artifacts/kairo-diffusion-v1 \
+  --input 'git commit -m "baguwoshuuseishita"' \
+  --context '直前の確定済み文章'
+```
+
+JSONL に任意の `context` フィールドがあれば文脈encoderへ渡します。現段階の
+実験モデルは length head が最初に系列長を決め、denoising中は長さを固定します。
+可変長の insert/delete diffusion は、固定長denoisingの安定性を確認した後に追加します。
+
 ## 📜 ライセンスとデータ方針
 このリポジトリのソースコードは MIT License で公開します。
 
