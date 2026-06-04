@@ -190,8 +190,10 @@ class KairoEditRefiner(nn.Module):
         """hypothesis を 1 ラウンド書き換える。
 
         hypothesis_ids は BOS/EOS で挟まれている前提（両端は編集しない）。
-        戻り値: (新しい hypothesis_ids, changed)
-        changed=False なら収束（呼び出し側は停止してよい）。
+        学習時と同じ単一パス: 1 回のエンコードから delete と「元仮説の各ギャップ
+        への insert 数」を同時に出し、削除とギャップ挿入を一度に適用して
+        placeholder 列を作り、それを再エンコードして fill する。
+        戻り値: (新しい hypothesis_ids, changed)。changed=False なら収束。
         """
         device = next(self.parameters()).device
         romaji = torch.tensor([romaji_ids], dtype=torch.long, device=device)
@@ -200,23 +202,22 @@ class KairoEditRefiner(nn.Module):
         tokens = torch.tensor([hypothesis_ids], dtype=torch.long, device=device)
         hidden = self.encode_hypothesis(tokens, memory)
 
-        # --- 1) 削除 ---
+        # --- 1) delete と insert 数を同一エンコードから ---
         delete = self.delete_logits(hidden)[0].argmax(dim=-1)  # (T,)
         delete[0] = KEEP   # BOS は保持
         delete[-1] = KEEP  # EOS は保持
-        kept = [tid for tid, op in zip(hypothesis_ids, delete.tolist()) if op == KEEP]
+        delete = delete.tolist()
+        # 元仮説の各ギャップ (T-1 個) への挿入数。
+        insert = self.insert_logits(hidden)[0].argmax(dim=-1).tolist()  # (T-1,)
 
-        # --- 2) 挿入数（削除後の形に対して測り直す） ---
-        tokens = torch.tensor([kept], dtype=torch.long, device=device)
-        hidden = self.encode_hypothesis(tokens, memory)
-        insert = self.insert_logits(hidden)[0].argmax(dim=-1).tolist()  # (len(kept)-1,)
+        # --- 2) 削除 + ギャップ挿入を一度に適用して placeholder 列を作る ---
+        with_placeholders: list[int] = [hypothesis_ids[0]]  # BOS
+        for j in range(1, len(hypothesis_ids)):
+            with_placeholders.extend([self.placeholder_id] * insert[j - 1])
+            if delete[j] == KEEP:
+                with_placeholders.append(hypothesis_ids[j])
 
-        with_placeholders: list[int] = [kept[0]]
-        for gap_index, count in enumerate(insert):
-            with_placeholders.extend([self.placeholder_id] * count)
-            with_placeholders.append(kept[gap_index + 1])
-
-        changed = (len(kept) != len(hypothesis_ids)) or any(c > 0 for c in insert)
+        changed = any(op == DELETE for op in delete) or any(c > 0 for c in insert)
         if self.placeholder_id not in with_placeholders:
             return with_placeholders, changed
 
