@@ -99,6 +99,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable the encoded-dataset cache (always re-encode).",
     )
+    parser.add_argument(
+        "--vocab-sample",
+        type=int,
+        default=None,
+        help="Build the BPE vocab from this many randomly sampled records "
+        "(base chars still cover all data). Speeds up vocab building on large corpora.",
+    )
     return parser.parse_args()
 
 
@@ -157,6 +164,8 @@ def main() -> None:
         max_insertions_per_gap=args.max_insertions_per_gap,
         vocab_dir=vocab_dir,
         cache_dir=cache_dir,
+        vocab_sample=args.vocab_sample,
+        vocab_sample_seed=args.seed,
     )
     if args.limit_examples is not None:
         dataset = Subset(dataset, range(min(args.limit_examples, len(dataset))))

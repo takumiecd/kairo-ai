@@ -80,12 +80,16 @@ def build_refine_vocabs_from_records(
     output_tokenizer: str = "char",
     output_vocab_size: int = 4000,
     output_min_token_frequency: int = 2,
+    vocab_sample: int | None = None,
+    vocab_sample_seed: int = 0,
 ) -> TrainingVocabs:
     base = build_edit_vocabs_from_records(
         records,
         output_tokenizer=output_tokenizer,
         output_vocab_size=output_vocab_size,
         output_min_token_frequency=output_min_token_frequency,
+        vocab_sample=vocab_sample,
+        vocab_sample_seed=vocab_sample_seed,
     )
     return TrainingVocabs(
         input_vocab=base.input_vocab,
@@ -277,6 +281,8 @@ def load_train_valid_refine_datasets_and_vocabs(
     max_insertions_per_gap: int = 8,
     vocab_dir=None,
     cache_dir=None,
+    vocab_sample: int | None = None,
+    vocab_sample_seed: int = 0,
 ) -> tuple[JsonlRefineDataset, JsonlRefineDataset | None, TrainingVocabs]:
     train_records = load_jsonl_examples(train_path)
     valid_records = load_jsonl_examples(valid_path) if valid_path is not None else []
@@ -288,12 +294,18 @@ def load_train_valid_refine_datasets_and_vocabs(
         print(f"Reusing vocab from {vocab_dir}", flush=True)
         vocabs = load_refine_vocabs(vocab_dir)
     else:
-        print(f"Building vocab (tokenizer={output_tokenizer}, size={output_vocab_size})...", flush=True)
+        sample_note = f", sample={vocab_sample}" if vocab_sample is not None else ""
+        print(
+            f"Building vocab (tokenizer={output_tokenizer}, size={output_vocab_size}{sample_note})...",
+            flush=True,
+        )
         vocabs = build_refine_vocabs_from_records(
             train_records + valid_records,
             output_tokenizer=output_tokenizer,
             output_vocab_size=output_vocab_size,
             output_min_token_frequency=output_min_token_frequency,
+            vocab_sample=vocab_sample,
+            vocab_sample_seed=vocab_sample_seed,
         )
     print(f"Output vocab size: {len(vocabs.output_vocab.id_to_token)}", flush=True)
     train_dataset = _load_or_encode(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import random
 
 
 INPUT_SPECIAL_TOKENS = ["<pad>", "<unk>"]
@@ -57,17 +58,35 @@ def build_output_bpe_vocab(
     texts: list[str],
     vocab_size: int,
     min_frequency: int = 2,
+    sample_size: int | None = None,
+    seed: int = 0,
 ) -> CharVocab:
+    # ベース文字は全テキストから集める（カバレッジを落とさない）。
     id_to_token = list(OUTPUT_SPECIAL_TOKENS)
     chars = sorted({char for text in texts for char in text})
     id_to_token.extend(char for char in chars if char not in id_to_token)
 
+    # マージ計算は重いので、必要ならサンプルしたコーパスで回す（(B)）。
+    merge_texts = texts
+    if sample_size is not None and sample_size < len(texts):
+        merge_texts = random.Random(seed).sample(texts, sample_size)
+
     sequences: dict[tuple[str, ...], int] = {}
-    for text in texts:
+    for text in merge_texts:
         if not text:
             continue
         tokens = tuple(text)
         sequences[tokens] = sequences.get(tokens, 0) + 1
+
+    try:
+        from tqdm import tqdm
+        pbar = tqdm(
+            total=max(0, vocab_size - len(id_to_token)),
+            desc="Building BPE merges",
+            leave=False,
+        )
+    except ImportError:
+        pbar = None
 
     while len(id_to_token) < vocab_size:
         pair_counts: dict[tuple[str, str], int] = {}
@@ -89,6 +108,8 @@ def build_output_bpe_vocab(
         if merged in id_to_token:
             break
         id_to_token.append(merged)
+        if pbar is not None:
+            pbar.update(1)
 
         next_sequences: dict[tuple[str, ...], int] = {}
         for tokens, count in sequences.items():
@@ -108,6 +129,9 @@ def build_output_bpe_vocab(
             merged_tuple = tuple(merged_tokens)
             next_sequences[merged_tuple] = next_sequences.get(merged_tuple, 0) + count
         sequences = next_sequences
+
+    if pbar is not None:
+        pbar.close()
 
     token_to_id = {token: index for index, token in enumerate(id_to_token)}
     return CharVocab(token_to_id=token_to_id, id_to_token=id_to_token)

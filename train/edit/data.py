@@ -174,6 +174,8 @@ def build_edit_vocabs_from_records(
     output_tokenizer: str = "char",
     output_vocab_size: int = 4000,
     output_min_token_frequency: int = 2,
+    vocab_sample: int | None = None,
+    vocab_sample_seed: int = 0,
 ) -> TrainingVocabs:
     vocab_records = [
         {
@@ -187,6 +189,8 @@ def build_edit_vocabs_from_records(
         output_tokenizer=output_tokenizer,
         output_vocab_size=output_vocab_size,
         output_min_token_frequency=output_min_token_frequency,
+        vocab_sample=vocab_sample,
+        vocab_sample_seed=vocab_sample_seed,
     )
 
 

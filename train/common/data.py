@@ -48,6 +48,8 @@ def build_vocabs_from_records(
     output_tokenizer: str = "char",
     output_vocab_size: int = 4000,
     output_min_token_frequency: int = 2,
+    vocab_sample: int | None = None,
+    vocab_sample_seed: int = 0,
 ) -> TrainingVocabs:
     targets = [record["target"] for record in records]
     if output_tokenizer == "char":
@@ -57,6 +59,8 @@ def build_vocabs_from_records(
             targets,
             vocab_size=output_vocab_size,
             min_frequency=output_min_token_frequency,
+            sample_size=vocab_sample,
+            seed=vocab_sample_seed,
         )
     else:
         raise ValueError("output_tokenizer must be one of: char, bpe")
