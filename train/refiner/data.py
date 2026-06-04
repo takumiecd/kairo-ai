@@ -272,6 +272,33 @@ def _load_or_encode(
     return dataset
 
 
+def _filter_by_length(
+    dataset: JsonlRefineDataset,
+    max_positions: int,
+    split: str,
+) -> JsonlRefineDataset:
+    """位置埋め込みテーブル (max_positions) を超える系列を持つ例を除外する。
+
+    input / hypothesis / placeholder のどれかが max_positions を超えると
+    位置埋め込みが範囲外になる（CUDA device assert）ので落とす。
+    """
+    kept = [
+        e
+        for e in dataset.examples
+        if len(e.input_ids) <= max_positions
+        and len(e.hypothesis_ids) <= max_positions
+        and len(e.placeholder_ids) <= max_positions
+    ]
+    dropped = len(dataset.examples) - len(kept)
+    if dropped:
+        print(
+            f"Dropped {dropped}/{len(dataset.examples)} {split} examples "
+            f"longer than max_positions={max_positions}",
+            flush=True,
+        )
+    return JsonlRefineDataset(kept)
+
+
 def load_train_valid_refine_datasets_and_vocabs(
     train_path,
     valid_path=None,
@@ -283,6 +310,7 @@ def load_train_valid_refine_datasets_and_vocabs(
     cache_dir=None,
     vocab_sample: int | None = None,
     vocab_sample_seed: int = 0,
+    max_positions: int | None = None,
 ) -> tuple[JsonlRefineDataset, JsonlRefineDataset | None, TrainingVocabs]:
     train_records = load_jsonl_examples(train_path)
     valid_records = load_jsonl_examples(valid_path) if valid_path is not None else []
@@ -316,6 +344,10 @@ def load_train_valid_refine_datasets_and_vocabs(
         if valid_path is not None
         else None
     )
+    if max_positions is not None:
+        train_dataset = _filter_by_length(train_dataset, max_positions, "train")
+        if valid_dataset is not None:
+            valid_dataset = _filter_by_length(valid_dataset, max_positions, "valid")
     print(f"Encoded train={len(train_dataset)}"
           + (f" valid={len(valid_dataset)}" if valid_dataset is not None else ""), flush=True)
     return train_dataset, valid_dataset, vocabs

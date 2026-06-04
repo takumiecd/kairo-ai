@@ -47,6 +47,7 @@ class RefineTrainConfig:
     feedforward_dim: int
     dropout: float
     max_insertions_per_gap: int
+    max_positions: int
     learning_rate: float
     weight_decay: float
     validation_ratio: float
@@ -79,6 +80,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--feedforward-dim", type=int, default=1024)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--max-insertions-per-gap", type=int, default=8)
+    parser.add_argument(
+        "--max-positions",
+        type=int,
+        default=512,
+        help="Positional-embedding table size. Examples longer than this are dropped.",
+    )
     parser.add_argument("--insert-loss-weight", type=float, default=1.0)
     parser.add_argument("--fill-loss-weight", type=float, default=1.0)
     parser.add_argument("--valid-max-rounds", type=int, default=2)
@@ -166,6 +173,7 @@ def main() -> None:
         cache_dir=cache_dir,
         vocab_sample=args.vocab_sample,
         vocab_sample_seed=args.seed,
+        max_positions=args.max_positions,
     )
     if args.limit_examples is not None:
         dataset = Subset(dataset, range(min(args.limit_examples, len(dataset))))
@@ -205,6 +213,7 @@ def main() -> None:
         feedforward_dim=args.feedforward_dim,
         dropout=args.dropout,
         max_insertions_per_gap=args.max_insertions_per_gap,
+        max_positions=args.max_positions,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         validation_ratio=args.validation_ratio,
@@ -241,6 +250,7 @@ def main() -> None:
         feedforward_dim=args.feedforward_dim,
         dropout=args.dropout,
         max_insertions_per_gap=args.max_insertions_per_gap,
+        max_positions=args.max_positions,
     ).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay

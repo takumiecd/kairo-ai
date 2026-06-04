@@ -218,6 +218,11 @@ class KairoEditRefiner(nn.Module):
                 with_placeholders.append(hypothesis_ids[j])
 
         changed = any(op == DELETE for op in delete) or any(c > 0 for c in insert)
+
+        # 安全策: 位置埋め込みテーブルを超えないよう切り詰める（推論時の過挿入対策）。
+        max_positions = self.hypothesis_pos.num_embeddings
+        if len(with_placeholders) > max_positions:
+            with_placeholders = with_placeholders[:max_positions]
         if self.placeholder_id not in with_placeholders:
             return with_placeholders, changed
 
