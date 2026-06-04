@@ -86,10 +86,16 @@ def parse_args() -> argparse.Namespace:
 @torch.no_grad()
 def evaluate_diffusion_cer(model, dataset, vocabs, max_samples: int) -> float:
     base_dataset, indexes = unwrap_subset(dataset)
+    selected = indexes[:max_samples]
     predictions: list[str] = []
     references: list[str] = []
     model.eval()
-    for index in indexes[:max_samples]:
+    try:
+        from tqdm import tqdm
+        iterable = tqdm(selected, desc="Validation CER decode", leave=False)
+    except ImportError:
+        iterable = selected
+    for index in iterable:
         example = base_dataset[index]
         predictions.append(
             diffusion_decode(
@@ -109,7 +115,9 @@ def main() -> None:
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     device = select_device(args.device)
+    print(f"Using device={device}", flush=True)
 
+    print("Preparing diffusion datasets...", flush=True)
     dataset, explicit_valid_dataset, vocabs = load_train_valid_diffusion_datasets_and_vocabs(
         args.data,
         args.valid_data,
@@ -140,6 +148,12 @@ def main() -> None:
         build_loader(valid_dataset, collate, args.batch_size, shuffle=False)
         if len(valid_dataset) > 0
         else None
+    )
+    print(
+        f"Prepared train={len(train_dataset)} valid={len(valid_dataset)} "
+        f"train_batches={len(train_loader)} "
+        f"valid_batches={len(valid_loader) if valid_loader is not None else 0}",
+        flush=True,
     )
 
     config = DiffusionTrainConfig(
@@ -180,6 +194,7 @@ def main() -> None:
     write_json(args.output_dir / "config.json", asdict(config))
     save_vocabs(args.output_dir, vocabs)
 
+    print("Building diffusion model...", flush=True)
     model = KairoDiffusionModel(
         input_vocab_size=len(vocabs.input_vocab.id_to_token),
         output_vocab_size=len(vocabs.output_vocab.id_to_token),
@@ -195,6 +210,8 @@ def main() -> None:
         max_positions=args.max_positions,
         diffusion_steps=args.diffusion_steps,
     ).to(device)
+    parameter_count = sum(parameter.numel() for parameter in model.parameters())
+    print(f"Built diffusion model parameters={parameter_count:,}", flush=True)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
     )
@@ -222,6 +239,11 @@ def main() -> None:
         output_dir=args.output_dir,
         config=config,
         amp=args.amp,
+    )
+    print(
+        f"Starting training epochs={args.epochs} batch_size={args.batch_size} "
+        f"diffusion_steps={args.diffusion_steps} amp={trainer.amp_enabled}",
+        flush=True,
     )
     trainer.fit(
         train_loader=train_loader,

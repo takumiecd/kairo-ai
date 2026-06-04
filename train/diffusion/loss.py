@@ -43,9 +43,17 @@ def evaluate_average_diffusion_loss(
 ) -> float:
     model.eval()
     losses: list[float] = []
-    for batch in loader:
+    try:
+        from tqdm import tqdm
+        iterable = tqdm(loader, desc="Validation loss", leave=False)
+    except ImportError:
+        iterable = loader
+    for batch in iterable:
         if device is not None:
             batch = move_batch_to_device(batch, device)
-        losses.append(float(compute_diffusion_loss(model, batch, length_loss_weight).item()))
+        loss = float(compute_diffusion_loss(model, batch, length_loss_weight).item())
+        losses.append(loss)
+        if hasattr(iterable, "set_postfix"):
+            iterable.set_postfix(loss=f"{loss:.4f}")
     model.train()
     return sum(losses) / len(losses)

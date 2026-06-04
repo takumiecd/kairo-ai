@@ -77,10 +77,18 @@ def build_diffusion_vocabs_from_records(
 
 
 def encode_diffusion_records(
-    records: list[dict[str, str]], vocabs: TrainingVocabs, max_positions: int
+    records: list[dict[str, str]],
+    vocabs: TrainingVocabs,
+    max_positions: int,
+    desc: str = "Encoding diffusion records",
 ) -> JsonlDiffusionDataset:
     examples: list[EncodedDiffusionExample] = []
-    for record in records:
+    try:
+        from tqdm import tqdm
+        iterator = tqdm(records, desc=desc, leave=False)
+    except ImportError:
+        iterator = records
+    for record in iterator:
         context = record.get("context", "")
         example = EncodedDiffusionExample(
             input_ids=vocabs.input_vocab.encode(record["input"]),
@@ -107,19 +115,48 @@ def load_train_valid_diffusion_datasets_and_vocabs(
     output_min_token_frequency: int = 2,
     max_positions: int = 256,
 ) -> tuple[JsonlDiffusionDataset, JsonlDiffusionDataset | None, TrainingVocabs]:
+    print(f"Loading train records from {train_path}...", flush=True)
     train_records = load_jsonl_examples(train_path)
-    valid_records = load_jsonl_examples(valid_path) if valid_path is not None else []
+    print(f"Loaded {len(train_records)} train records", flush=True)
+    if valid_path is not None:
+        print(f"Loading valid records from {valid_path}...", flush=True)
+        valid_records = load_jsonl_examples(valid_path)
+        print(f"Loaded {len(valid_records)} valid records", flush=True)
+    else:
+        valid_records = []
+    print(
+        f"Building vocab (tokenizer={output_tokenizer}, size={output_vocab_size})...",
+        flush=True,
+    )
     vocabs = build_diffusion_vocabs_from_records(
         train_records + valid_records,
         output_tokenizer=output_tokenizer,
         output_vocab_size=output_vocab_size,
         output_min_token_frequency=output_min_token_frequency,
     )
-    train = encode_diffusion_records(train_records, vocabs, max_positions)
+    print(
+        f"Built input vocab={len(vocabs.input_vocab.id_to_token)} "
+        f"output vocab={len(vocabs.output_vocab.id_to_token)}",
+        flush=True,
+    )
+    train = encode_diffusion_records(
+        train_records, vocabs, max_positions, desc="Encoding train"
+    )
     valid = (
-        encode_diffusion_records(valid_records, vocabs, max_positions)
+        encode_diffusion_records(
+            valid_records, vocabs, max_positions, desc="Encoding valid"
+        )
         if valid_path is not None
         else None
+    )
+    print(
+        f"Encoded train={len(train)}/{len(train_records)}"
+        + (
+            f" valid={len(valid)}/{len(valid_records)}"
+            if valid is not None
+            else ""
+        ),
+        flush=True,
     )
     return train, valid, vocabs
 
