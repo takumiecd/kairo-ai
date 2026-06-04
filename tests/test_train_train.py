@@ -5,13 +5,13 @@ from dataclasses import dataclass
 
 import torch
 
-from train.checkpoint import load_checkpoint
-from train.checkpoint import save_checkpoint
-from train.train import select_device
-from train.train import split_dataset
-from train.train import load_best_valid_loss
-from train.train import get_resume_model_dims
-from train.train import ModelDims
+from train.common.checkpoint import load_checkpoint
+from train.common.checkpoint import save_checkpoint
+from train.rnnt.train import select_device
+from train.rnnt.train import split_dataset
+from train.rnnt.train import load_best_valid_loss
+from train.rnnt.train import get_resume_model_dims
+from train.rnnt.train import ModelDims
 
 
 class TrainEntrypointTest(unittest.TestCase):

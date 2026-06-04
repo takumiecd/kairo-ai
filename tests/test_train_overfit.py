@@ -4,11 +4,11 @@ import torch
 from torch.utils.data import DataLoader
 
 from model.transducer import KairoTransducer
-from train.data import build_vocabs_from_records
-from train.data import collate_transducer_batch
-from train.data import encode_records
-from train.loss import compute_rnnt_loss
-from train.loss import evaluate_average_loss
+from train.common.data import build_vocabs_from_records
+from train.rnnt.data import collate_transducer_batch
+from train.rnnt.data import encode_records
+from train.rnnt.loss import compute_rnnt_loss
+from train.rnnt.loss import evaluate_average_loss
 
 
 class TrainOverfitTest(unittest.TestCase):

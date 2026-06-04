@@ -6,10 +6,10 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from train.edit_data import ACTION_PAD
-from train.edit_data import INSERT
-from train.edit_data import INSERT_PAD
-from train.loss import move_batch_to_device
+from train.edit.data import ACTION_PAD
+from train.edit.data import INSERT
+from train.edit.data import INSERT_PAD
+from train.common.batch import move_batch_to_device
 
 
 def compute_edit_loss(

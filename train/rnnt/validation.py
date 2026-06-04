@@ -1,4 +1,4 @@
-"""Validation decoding metrics for training."""
+"""Validation decoding metrics for RNN-T training."""
 
 from __future__ import annotations
 
@@ -7,12 +7,7 @@ import torch
 from decode.beam import beam_search_decode
 from decode.greedy import greedy_decode
 from eval.metrics import mean_cer
-
-
-def unwrap_subset(dataset):
-    if hasattr(dataset, "dataset") and hasattr(dataset, "indices"):
-        return dataset.dataset, list(dataset.indices)
-    return dataset, list(range(len(dataset)))
+from train.common.validation import unwrap_subset
 
 
 @torch.no_grad()

@@ -11,20 +11,20 @@ import torch
 from torch.utils.data import Subset
 
 from model.edit_transducer import KairoEditTransducer
-from train.checkpoint import load_checkpoint
-from train.checkpoint import save_vocabs
-from train.checkpoint import write_json
-from train.edit_data import collate_edit_batch
-from train.edit_data import load_train_valid_edit_datasets_and_vocabs
-from train.edit_loss import compute_edit_loss
-from train.edit_loss import evaluate_average_edit_loss
-from train.edit_validation import evaluate_edit_decode_cer
-from train.engine import Trainer
-from train.engine import add_common_args
-from train.engine import build_loader
-from train.engine import restore_training_state
-from train.engine import select_device
-from train.engine import split_dataset
+from train.common.checkpoint import load_checkpoint
+from train.common.checkpoint import save_vocabs
+from train.common.checkpoint import write_json
+from train.edit.data import collate_edit_batch
+from train.edit.data import load_train_valid_edit_datasets_and_vocabs
+from train.edit.loss import compute_edit_loss
+from train.edit.loss import evaluate_average_edit_loss
+from train.edit.validation import evaluate_edit_decode_cer
+from train.common.engine import Trainer
+from train.common.engine import add_common_args
+from train.common.engine import build_loader
+from train.common.engine import restore_training_state
+from train.common.engine import select_device
+from train.common.engine import split_dataset
 
 
 @dataclass(frozen=True)

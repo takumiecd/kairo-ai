@@ -6,12 +6,7 @@ import torch
 import torchaudio.functional as F
 from torch.utils.data import DataLoader
 
-
-def move_batch_to_device(
-    batch: dict[str, torch.Tensor],
-    device: torch.device,
-) -> dict[str, torch.Tensor]:
-    return {key: value.to(device) for key, value in batch.items()}
+from train.common.batch import move_batch_to_device
 
 
 def compute_rnnt_loss(model, batch: dict[str, torch.Tensor], blank_id: int) -> torch.Tensor:

@@ -12,22 +12,22 @@ from torch.utils.data import Subset
 
 from eval.metrics import mean_cer
 from model.edit_refiner import KairoEditRefiner
-from train.checkpoint import load_checkpoint
-from train.checkpoint import save_vocabs
-from train.checkpoint import write_json
-from train.data import TrainingVocabs
-from train.edit_refine_data import collate_refine_batch
-from train.edit_refine_data import load_train_valid_refine_datasets_and_vocabs
-from train.edit_refine_data import placeholder_id
-from train.edit_refine_loss import compute_refine_loss
-from train.edit_refine_loss import evaluate_average_refine_loss
-from train.engine import Trainer
-from train.engine import add_common_args
-from train.engine import build_loader
-from train.engine import restore_training_state
-from train.engine import select_device
-from train.engine import split_dataset
-from train.validation import unwrap_subset
+from train.common.checkpoint import load_checkpoint
+from train.common.checkpoint import save_vocabs
+from train.common.checkpoint import write_json
+from train.common.data import TrainingVocabs
+from train.refiner.data import collate_refine_batch
+from train.refiner.data import load_train_valid_refine_datasets_and_vocabs
+from train.refiner.data import placeholder_id
+from train.refiner.loss import compute_refine_loss
+from train.refiner.loss import evaluate_average_refine_loss
+from train.common.engine import Trainer
+from train.common.engine import add_common_args
+from train.common.engine import build_loader
+from train.common.engine import restore_training_state
+from train.common.engine import select_device
+from train.common.engine import split_dataset
+from train.common.validation import unwrap_subset
 
 
 @dataclass(frozen=True)

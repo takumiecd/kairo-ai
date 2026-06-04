@@ -11,23 +11,23 @@ import torch
 from torch.utils.data import Subset
 
 from model.transducer import KairoTransducer
-from train.checkpoint import load_checkpoint
-from train.checkpoint import save_vocabs
-from train.checkpoint import write_json
-from train.data import collate_transducer_batch
-from train.data import load_train_valid_datasets_and_vocabs
-from train.engine import Trainer
-from train.engine import add_common_args
-from train.engine import build_loader
-from train.engine import restore_training_state
-from train.engine import select_device
-from train.engine import split_dataset
-from train.loss import compute_rnnt_loss
-from train.loss import evaluate_average_loss
-from train.validation import evaluate_decode_cer
+from train.common.checkpoint import load_checkpoint
+from train.common.checkpoint import save_vocabs
+from train.common.checkpoint import write_json
+from train.rnnt.data import collate_transducer_batch
+from train.rnnt.data import load_train_valid_datasets_and_vocabs
+from train.common.engine import Trainer
+from train.common.engine import add_common_args
+from train.common.engine import build_loader
+from train.common.engine import restore_training_state
+from train.common.engine import select_device
+from train.common.engine import split_dataset
+from train.rnnt.loss import compute_rnnt_loss
+from train.rnnt.loss import evaluate_average_loss
+from train.rnnt.validation import evaluate_decode_cer
 
 # 後方互換: テストが train.train から import している共通シンボル。
-from train.engine import load_best_valid_loss  # noqa: F401
+from train.common.engine import load_best_valid_loss  # noqa: F401
 
 
 @dataclass(frozen=True)

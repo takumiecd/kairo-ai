@@ -7,9 +7,9 @@ from dataclasses import dataclass
 import torch
 from torch.utils.data import Dataset
 
-from train.data import TrainingVocabs
-from train.data import build_vocabs_from_records
-from train.data import load_jsonl_examples
+from train.common.data import TrainingVocabs
+from train.common.data import build_vocabs_from_records
+from train.common.data import load_jsonl_examples
 
 
 KEEP = 0

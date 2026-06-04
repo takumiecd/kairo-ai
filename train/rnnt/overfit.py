@@ -10,10 +10,10 @@ from torch.utils.data import DataLoader
 from torch.utils.data import Subset
 
 from model.transducer import KairoTransducer
-from train.data import collate_transducer_batch
-from train.data import load_dataset_and_vocabs
-from train.loss import compute_rnnt_loss
-from train.loss import evaluate_average_loss
+from train.rnnt.data import collate_transducer_batch
+from train.rnnt.data import load_dataset_and_vocabs
+from train.rnnt.loss import compute_rnnt_loss
+from train.rnnt.loss import evaluate_average_loss
 
 
 def parse_args() -> argparse.Namespace:

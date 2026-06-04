@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from train.edit_data import ACTION_BOS
+from train.edit.data import ACTION_BOS
 
 
 class KairoEditTransducer(nn.Module):

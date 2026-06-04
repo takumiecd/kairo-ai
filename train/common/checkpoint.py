@@ -9,7 +9,7 @@ from typing import Any
 
 import torch
 
-from train.data import TrainingVocabs
+from train.common.data import TrainingVocabs
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:

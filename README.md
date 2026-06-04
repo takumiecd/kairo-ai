@@ -88,7 +88,7 @@ python -m dataset.source_wikipedia \
 
 ```bash
 python -m dataset.generate --output data/synthetic.jsonl --augmentations 1
-python -m train.overfit --data data/synthetic.jsonl --steps 30 --batch-size 2 --embed-dim 16 --hidden-dim 32 --learning-rate 0.01 --max-examples 4 --eval-every 10
+python -m train.rnnt.overfit --data data/synthetic.jsonl --steps 30 --batch-size 2 --embed-dim 16 --hidden-dim 32 --learning-rate 0.01 --max-examples 4 --eval-every 10
 ```
 
 評価指標として、文字列同士の CER(Character Error Rate) を `eval.metrics` に用意しています。decode実装後は予測文字列とtargetの比較に使います。
@@ -97,7 +97,7 @@ python -m train.overfit --data data/synthetic.jsonl --steps 30 --batch-size 2 --
 checkpoint、config、vocab を保存する通常の学習 entrypoint です。
 
 ```bash
-python -m train.train \
+python -m train.rnnt.train \
   --data data/synthetic/train.jsonl \
   --valid-data data/synthetic/valid.jsonl \
   --output-dir artifacts/run1 \
@@ -111,7 +111,7 @@ python -m train.train \
 validation中にdecodeしてCERも確認できます。`greedy` は軽く、`beam` は重いのでサンプル数と頻度を制限します。
 
 ```bash
-python -m train.train \
+python -m train.rnnt.train \
   --data data/combined/aozora/train.jsonl \
   --valid-data data/combined/aozora/valid.jsonl \
   --output-dir artifacts/aozora-rnnt-v1 \
@@ -127,7 +127,7 @@ python -m train.train \
 途中から再開する場合:
 
 ```bash
-python -m train.train \
+python -m train.rnnt.train \
   --data data/synthetic/train.jsonl \
   --valid-data data/synthetic/valid.jsonl \
   --output-dir artifacts/run1 \

@@ -6,10 +6,10 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from train.edit_refine_data import DELETE_PAD
-from train.edit_refine_data import FILL_PAD
-from train.edit_refine_data import INSERT_PAD
-from train.loss import move_batch_to_device
+from train.refiner.data import DELETE_PAD
+from train.refiner.data import FILL_PAD
+from train.refiner.data import INSERT_PAD
+from train.common.batch import move_batch_to_device
 
 
 def compute_refine_loss(

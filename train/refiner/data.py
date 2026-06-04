@@ -19,14 +19,14 @@ import torch
 from torch.utils.data import Dataset
 
 from dataset.vocab import CharVocab
-from train.data import TrainingVocabs
-from train.data import load_jsonl_examples
-from train.edit_data import DELETE
-from train.edit_data import INSERT
-from train.edit_data import KEEP
-from train.edit_data import STOP
-from train.edit_data import build_edit_vocabs_from_records
-from train.edit_data import build_min_edit_script
+from train.common.data import TrainingVocabs
+from train.common.data import load_jsonl_examples
+from train.edit.data import DELETE
+from train.edit.data import INSERT
+from train.edit.data import KEEP
+from train.edit.data import STOP
+from train.edit.data import build_edit_vocabs_from_records
+from train.edit.data import build_min_edit_script
 
 
 EOS_TOKEN = "<eos>"

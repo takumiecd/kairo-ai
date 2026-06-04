@@ -1,10 +1,10 @@
 import unittest
 
 from model.edit_transducer import KairoEditTransducer
-from train.data import build_vocabs_from_records
-from train.edit_data import collate_edit_batch
-from train.edit_data import encode_edit_example
-from train.edit_loss import compute_edit_loss
+from train.common.data import build_vocabs_from_records
+from train.edit.data import collate_edit_batch
+from train.edit.data import encode_edit_example
+from train.edit.loss import compute_edit_loss
 
 
 class EditLossTest(unittest.TestCase):

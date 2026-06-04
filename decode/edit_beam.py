@@ -10,11 +10,11 @@ from dataset.vocab import CharVocab
 from decode.greedy import infer_model_device
 from decode.scores import Candidate
 from decode.scores import normalize_candidate_confidence
-from train.edit_data import ACTION_BOS
-from train.edit_data import DELETE
-from train.edit_data import INSERT
-from train.edit_data import KEEP
-from train.edit_data import STOP
+from train.edit.data import ACTION_BOS
+from train.edit.data import DELETE
+from train.edit.data import INSERT
+from train.edit.data import KEEP
+from train.edit.data import STOP
 
 
 @dataclass(frozen=True)

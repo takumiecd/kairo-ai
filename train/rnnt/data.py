@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from pathlib import Path
 
 import torch
 from torch.utils.data import Dataset
 
-from dataset.vocab import CharVocab
-from dataset.vocab import build_input_vocab
-from dataset.vocab import build_output_bpe_vocab
-from dataset.vocab import build_output_vocab
+from train.common.data import TrainingVocabs
+from train.common.data import build_vocabs_from_records
+from train.common.data import load_jsonl_examples
 
 
 @dataclass(frozen=True)
@@ -21,28 +19,6 @@ class EncodedExample:
     target_ids: list[int]
     input_text: str
     target_text: str
-
-
-@dataclass(frozen=True)
-class TrainingVocabs:
-    input_vocab: CharVocab
-    output_vocab: CharVocab
-
-    @property
-    def input_pad_id(self) -> int:
-        return self.input_vocab.token_to_id["<pad>"]
-
-    @property
-    def output_pad_id(self) -> int:
-        return self.output_vocab.token_to_id["<pad>"]
-
-    @property
-    def blank_id(self) -> int:
-        return self.output_vocab.token_to_id["<blank>"]
-
-    @property
-    def bos_id(self) -> int:
-        return self.output_vocab.token_to_id["<bos>"]
 
 
 class JsonlTransducerDataset(Dataset):
@@ -54,39 +30,6 @@ class JsonlTransducerDataset(Dataset):
 
     def __getitem__(self, index: int) -> EncodedExample:
         return self.examples[index]
-
-
-def load_jsonl_examples(path: Path) -> list[dict[str, str]]:
-    examples: list[dict[str, str]] = []
-    with path.open("r", encoding="utf-8") as file:
-        for line in file:
-            if line.strip():
-                examples.append(json.loads(line))
-    return examples
-
-
-def build_vocabs_from_records(
-    records: list[dict[str, str]],
-    output_tokenizer: str = "char",
-    output_vocab_size: int = 4000,
-    output_min_token_frequency: int = 2,
-) -> TrainingVocabs:
-    targets = [record["target"] for record in records]
-    if output_tokenizer == "char":
-        output_vocab = build_output_vocab(targets)
-    elif output_tokenizer == "bpe":
-        output_vocab = build_output_bpe_vocab(
-            targets,
-            vocab_size=output_vocab_size,
-            min_frequency=output_min_token_frequency,
-        )
-    else:
-        raise ValueError("output_tokenizer must be one of: char, bpe")
-
-    return TrainingVocabs(
-        input_vocab=build_input_vocab([record["input"] for record in records]),
-        output_vocab=output_vocab,
-    )
 
 
 def encode_records(

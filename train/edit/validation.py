@@ -6,7 +6,7 @@ import torch
 
 from decode.edit_beam import edit_beam_search_decode
 from eval.metrics import mean_cer
-from train.validation import unwrap_subset
+from train.common.validation import unwrap_subset
 
 
 @torch.no_grad()

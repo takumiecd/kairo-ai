@@ -1,15 +1,15 @@
 import unittest
 
-from train.data import build_vocabs_from_records
-from train.edit_data import ACTION_BOS
-from train.edit_data import DELETE
-from train.edit_data import INSERT
-from train.edit_data import KEEP
-from train.edit_data import STOP
-from train.edit_data import apply_edit_script
-from train.edit_data import build_min_edit_script
-from train.edit_data import collate_edit_batch
-from train.edit_data import encode_edit_example
+from train.common.data import build_vocabs_from_records
+from train.edit.data import ACTION_BOS
+from train.edit.data import DELETE
+from train.edit.data import INSERT
+from train.edit.data import KEEP
+from train.edit.data import STOP
+from train.edit.data import apply_edit_script
+from train.edit.data import build_min_edit_script
+from train.edit.data import collate_edit_batch
+from train.edit.data import encode_edit_example
 
 
 class EditDataTest(unittest.TestCase):

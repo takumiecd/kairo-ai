@@ -4,10 +4,10 @@ import torch
 
 from dataset.vocab import build_input_vocab
 from dataset.vocab import build_output_vocab
-from train.data import TrainingVocabs
-from train.edit_data import JsonlEditDataset
-from train.edit_data import encode_edit_example
-from train.edit_validation import evaluate_edit_decode_cer
+from train.common.data import TrainingVocabs
+from train.edit.data import JsonlEditDataset
+from train.edit.data import encode_edit_example
+from train.edit.validation import evaluate_edit_decode_cer
 
 
 class DummyKeepModel:

@@ -2,10 +2,10 @@ import unittest
 
 import torch
 
-from train.data import build_vocabs_from_records
-from train.data import encode_records
-from train.validation import evaluate_decode_cer
-from train.validation import unwrap_subset
+from train.common.data import build_vocabs_from_records
+from train.rnnt.data import encode_records
+from train.rnnt.validation import evaluate_decode_cer
+from train.common.validation import unwrap_subset
 
 
 class EmptyDecodeModel:

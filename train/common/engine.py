@@ -22,9 +22,9 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import Subset
 
-from train.checkpoint import load_checkpoint
-from train.checkpoint import save_checkpoint
-from train.loss import move_batch_to_device
+from train.common.checkpoint import load_checkpoint
+from train.common.checkpoint import save_checkpoint
+from train.common.batch import move_batch_to_device
 
 
 # ----------------------------------------------------------------------

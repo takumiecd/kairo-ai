@@ -5,11 +5,11 @@ import torch
 from dataset.vocab import build_input_vocab
 from dataset.vocab import build_output_vocab
 from decode.edit_beam import edit_beam_search_decode
-from train.edit_data import ACTION_BOS
-from train.edit_data import DELETE
-from train.edit_data import INSERT
-from train.edit_data import KEEP
-from train.edit_data import STOP
+from train.edit.data import ACTION_BOS
+from train.edit.data import DELETE
+from train.edit.data import INSERT
+from train.edit.data import KEEP
+from train.edit.data import STOP
 
 
 class DummyEditModel:
