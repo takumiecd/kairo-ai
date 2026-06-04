@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 from dataclasses import dataclass
+from pathlib import Path
 import random
 
 import torch
@@ -81,6 +82,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--insert-loss-weight", type=float, default=1.0)
     parser.add_argument("--fill-loss-weight", type=float, default=1.0)
     parser.add_argument("--valid-max-rounds", type=int, default=2)
+    parser.add_argument(
+        "--vocab",
+        type=Path,
+        default=None,
+        help="Reuse a saved vocab dir (input_vocab.json/output_vocab.json) instead of rebuilding.",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Where to cache encoded datasets. Defaults to <data dir>/.kairo_cache.",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable the encoded-dataset cache (always re-encode).",
+    )
     return parser.parse_args()
 
 
@@ -123,6 +141,13 @@ def main() -> None:
     random.seed(args.seed)
     device = select_device(args.device)
 
+    # 語彙の再利用: --vocab 明示、または resume 時はその run の output_dir を流用
+    # （再構築せず checkpoint と同じ語彙を保証＆BPE 構築を省略）。
+    vocab_dir = args.vocab
+    if vocab_dir is None and args.resume is not None:
+        vocab_dir = args.output_dir
+    cache_dir = None if args.no_cache else (args.cache_dir or Path(args.data).resolve().parent / ".kairo_cache")
+
     dataset, explicit_valid_dataset, vocabs = load_train_valid_refine_datasets_and_vocabs(
         args.data,
         args.valid_data,
@@ -130,6 +155,8 @@ def main() -> None:
         output_vocab_size=args.output_vocab_size,
         output_min_token_frequency=args.output_min_token_frequency,
         max_insertions_per_gap=args.max_insertions_per_gap,
+        vocab_dir=vocab_dir,
+        cache_dir=cache_dir,
     )
     if args.limit_examples is not None:
         dataset = Subset(dataset, range(min(args.limit_examples, len(dataset))))
