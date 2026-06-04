@@ -27,6 +27,7 @@ from train.loss import move_batch_to_device
 from train.train import plot_metrics
 from train.train import select_device
 from train.train import split_dataset
+from train.train import trim_metrics_log
 
 
 @dataclass(frozen=True)
@@ -211,6 +212,7 @@ def main() -> None:
         start_epoch = int(checkpoint["epoch"]) + 1
 
     best_valid_loss = float("inf")
+    trim_metrics_log(args.output_dir, start_epoch)
     for epoch in range(start_epoch, args.epochs + 1):
         print(f"Epoch {epoch}/{args.epochs} started. Training on {len(train_loader)} batches...")
         model.train()

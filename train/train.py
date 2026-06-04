@@ -235,6 +235,29 @@ def get_resume_model_dims(checkpoint: dict) -> ModelDims:
     )
 
 
+def trim_metrics_log(output_dir: Path, start_epoch: int) -> None:
+    """Keep only metric rows before ``start_epoch`` so plots stay continuous.
+
+    ``metrics.jsonl`` is append-only and ``plot_metrics`` draws rows in file
+    order. Without trimming, resuming (especially from an earlier checkpoint
+    such as ``best.pt``) leaves stale rows whose epoch >= start_epoch, making
+    the curve jump backward and look like it restarts from the beginning.
+    """
+    metrics_log_path = output_dir / "metrics.jsonl"
+    if not metrics_log_path.exists():
+        return
+    kept: list[str] = []
+    with metrics_log_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if record.get("epoch", 0) < start_epoch:
+                kept.append(line if line.endswith("\n") else line + "\n")
+    with metrics_log_path.open("w", encoding="utf-8") as f:
+        f.writelines(kept)
+
+
 def plot_metrics(output_dir: Path) -> None:
     metrics_log_path = output_dir / "metrics.jsonl"
     if not metrics_log_path.exists():
@@ -424,6 +447,7 @@ def main() -> None:
         print(f"resumed_from={args.resume} start_epoch={start_epoch}")
 
     best_valid_loss = load_best_valid_loss(args.output_dir)
+    trim_metrics_log(args.output_dir, start_epoch)
     for epoch in range(start_epoch, args.epochs + 1):
         print(f"Epoch {epoch}/{args.epochs} started. Training on {len(train_loader)} batches...")
         model.train()
