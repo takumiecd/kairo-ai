@@ -5,25 +5,29 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 from dataclasses import dataclass
-import json
-from pathlib import Path
 import random
 
 import torch
-from torch.utils.data import DataLoader
 from torch.utils.data import Subset
 
 from model.transducer import KairoTransducer
-from train.checkpoint import save_checkpoint
+from train.checkpoint import load_checkpoint
 from train.checkpoint import save_vocabs
 from train.checkpoint import write_json
-from train.checkpoint import load_checkpoint
 from train.data import collate_transducer_batch
 from train.data import load_train_valid_datasets_and_vocabs
+from train.engine import Trainer
+from train.engine import add_common_args
+from train.engine import build_loader
+from train.engine import restore_training_state
+from train.engine import select_device
+from train.engine import split_dataset
 from train.loss import compute_rnnt_loss
 from train.loss import evaluate_average_loss
-from train.loss import move_batch_to_device
 from train.validation import evaluate_decode_cer
+
+# 後方互換: テストが train.train から import している共通シンボル。
+from train.engine import load_best_valid_loss  # noqa: F401
 
 
 @dataclass(frozen=True)
@@ -71,16 +75,8 @@ class ModelDims:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data", type=Path, required=True)
-    parser.add_argument(
-        "--valid-data",
-        type=Path,
-        default=None,
-        help="Optional explicit validation JSONL. Disables internal validation split.",
-    )
-    parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--batch-size", type=int, default=4)
+    add_common_args(parser)
+    # RNN-T 固有の次元フラグ。
     parser.add_argument("--embed-dim", type=int, default=64)
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--input-embed-dim", type=int, default=None)
@@ -88,101 +84,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--encoder-hidden-dim", type=int, default=None)
     parser.add_argument("--prediction-hidden-dim", type=int, default=None)
     parser.add_argument("--joint-hidden-dim", type=int, default=None)
-    parser.add_argument("--learning-rate", type=float, default=1e-3)
-    parser.add_argument("--weight-decay", type=float, default=1e-2)
-    parser.add_argument("--validation-ratio", type=float, default=0.1)
-    parser.add_argument("--limit-examples", type=int, default=None)
-    parser.add_argument("--gradient-clip", type=float, default=1.0)
-    parser.add_argument(
-        "--device",
-        choices=["auto", "cpu", "mps", "cuda"],
-        default="auto",
-    )
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument(
-        "--resume",
-        type=Path,
-        default=None,
-        help="Checkpoint path to resume from.",
-    )
-    parser.add_argument(
-        "--valid-decode",
-        choices=["none", "greedy", "beam"],
-        default="none",
-        help="Decoder used for validation CER.",
-    )
-    parser.add_argument("--valid-cer-samples", type=int, default=100)
-    parser.add_argument("--valid-cer-every", type=int, default=1)
-    parser.add_argument("--valid-beam-width", type=int, default=5)
-    parser.add_argument("--valid-expansion-width", type=int, default=5)
-    parser.add_argument(
-        "--output-tokenizer",
-        choices=["char", "bpe"],
-        default="char",
-        help="Tokenizer for output targets. Input remains character-tokenized.",
-    )
-    parser.add_argument("--output-vocab-size", type=int, default=4000)
-    parser.add_argument("--output-min-token-frequency", type=int, default=2)
     parser.add_argument(
         "--max-len",
         type=int,
         default=None,
         help="Filter out examples where input or target length exceeds this limit.",
     )
-    parser.add_argument(
-        "--amp",
-        action="store_true",
-        help="Use automatic mixed precision (AMP) for training.",
-    )
     return parser.parse_args()
-
-
-def select_device(name: str) -> torch.device:
-    if name == "auto":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        if torch.backends.mps.is_available():
-            return torch.device("mps")
-        return torch.device("cpu")
-
-    device = torch.device(name)
-    if name == "cuda" and not torch.cuda.is_available():
-        raise ValueError("CUDA was requested but is not available")
-    if name == "mps" and not torch.backends.mps.is_available():
-        raise ValueError("MPS was requested but is not available")
-    return device
-
-
-def split_dataset(dataset, validation_ratio: float, seed: int):
-    if not 0.0 <= validation_ratio < 1.0:
-        raise ValueError("validation_ratio must be in [0.0, 1.0)")
-
-    indexes = list(range(len(dataset)))
-    random.Random(seed).shuffle(indexes)
-    valid_size = int(len(indexes) * validation_ratio)
-    if validation_ratio > 0.0 and valid_size == 0 and len(indexes) > 1:
-        valid_size = 1
-
-    valid_indexes = indexes[:valid_size]
-    train_indexes = indexes[valid_size:] or valid_indexes
-    return Subset(dataset, train_indexes), Subset(dataset, valid_indexes)
-
-
-def build_loader(dataset, vocabs, batch_size: int, shuffle: bool) -> DataLoader:
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        collate_fn=lambda examples: collate_transducer_batch(examples, vocabs),
-    )
-
-
-def load_best_valid_loss(output_dir: Path) -> float:
-    best_path = output_dir / "checkpoints" / "best.pt"
-    if not best_path.exists():
-        return float("inf")
-    state = load_checkpoint(best_path, map_location="cpu")
-    return float(state.get("valid_loss", float("inf")))
 
 
 def resolve_model_dims(args: argparse.Namespace) -> ModelDims:
@@ -235,91 +143,12 @@ def get_resume_model_dims(checkpoint: dict) -> ModelDims:
     )
 
 
-def trim_metrics_log(output_dir: Path, start_epoch: int) -> None:
-    """Keep only metric rows before ``start_epoch`` so plots stay continuous.
-
-    ``metrics.jsonl`` is append-only and ``plot_metrics`` draws rows in file
-    order. Without trimming, resuming (especially from an earlier checkpoint
-    such as ``best.pt``) leaves stale rows whose epoch >= start_epoch, making
-    the curve jump backward and look like it restarts from the beginning.
-    """
-    metrics_log_path = output_dir / "metrics.jsonl"
-    if not metrics_log_path.exists():
-        return
-    kept: list[str] = []
-    with metrics_log_path.open("r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            record = json.loads(line)
-            if record.get("epoch", 0) < start_epoch:
-                kept.append(line if line.endswith("\n") else line + "\n")
-    with metrics_log_path.open("w", encoding="utf-8") as f:
-        f.writelines(kept)
-
-
-def plot_metrics(output_dir: Path) -> None:
-    metrics_log_path = output_dir / "metrics.jsonl"
-    if not metrics_log_path.exists():
-        return
-
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        
-        epochs = []
-        train_losses = []
-        valid_losses = []
-        valid_cers = []
-        cer_epochs = []
-        
-        with open(metrics_log_path, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    data = json.loads(line)
-                    epochs.append(data["epoch"])
-                    train_losses.append(data["train_loss"])
-                    valid_losses.append(data["valid_loss"])
-                    if "valid_cer" in data and data["valid_cer"] is not None:
-                        valid_cers.append(data["valid_cer"])
-                        cer_epochs.append(data["epoch"])
-                        
-        plt.figure(figsize=(10, 6))
-        plt.plot(epochs, train_losses, label="Train Loss", marker="o", color="blue")
-        plt.plot(epochs, valid_losses, label="Validation Loss", marker="x", color="red")
-        plt.title("Loss Curves")
-        plt.xlabel("Epoch")
-        plt.ylabel("Loss")
-        plt.grid(True, linestyle="--", alpha=0.6)
-        plt.legend()
-        
-        loss_output_path = output_dir / "loss_curve.png"
-        plt.savefig(loss_output_path, dpi=150, bbox_inches="tight")
-        plt.close()
-        
-        if valid_cers:
-            plt.figure(figsize=(10, 6))
-            plt.plot(cer_epochs, valid_cers, label="Validation CER", marker="s", color="green")
-            plt.title("Validation Character Error Rate (CER)")
-            plt.xlabel("Epoch")
-            plt.ylabel("CER")
-            plt.grid(True, linestyle="--", alpha=0.6)
-            plt.legend()
-            
-            cer_output_path = output_dir / "cer_curve.png"
-            plt.savefig(cer_output_path, dpi=150, bbox_inches="tight")
-            plt.close()
-            
-    except ImportError:
-        pass
-
-
 def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     device = select_device(args.device)
+
     resume_checkpoint = (
         load_checkpoint(args.resume, map_location=device) if args.resume else None
     )
@@ -336,10 +165,7 @@ def main() -> None:
             resume_config.get("output_vocab_size", args.output_vocab_size)
         )
         args.output_min_token_frequency = int(
-            resume_config.get(
-                "output_min_token_frequency",
-                args.output_min_token_frequency,
-            )
+            resume_config.get("output_min_token_frequency", args.output_min_token_frequency)
         )
         print(
             f"resume_model_dims input_embed_dim={args.input_embed_dim} "
@@ -347,11 +173,6 @@ def main() -> None:
             f"encoder_hidden_dim={args.encoder_hidden_dim} "
             f"prediction_hidden_dim={args.prediction_hidden_dim} "
             f"joint_hidden_dim={args.joint_hidden_dim}"
-        )
-        print(
-            f"resume_output_tokenizer output_tokenizer={args.output_tokenizer} "
-            f"output_vocab_size={args.output_vocab_size} "
-            f"output_min_token_frequency={args.output_min_token_frequency}"
         )
     dims = resolve_model_dims(args)
 
@@ -373,16 +194,16 @@ def main() -> None:
 
     if explicit_valid_dataset is None:
         train_dataset, valid_dataset = split_dataset(
-            dataset,
-            validation_ratio=args.validation_ratio,
-            seed=args.seed,
+            dataset, validation_ratio=args.validation_ratio, seed=args.seed
         )
     else:
         train_dataset = dataset
         valid_dataset = explicit_valid_dataset
-    train_loader = build_loader(train_dataset, vocabs, args.batch_size, shuffle=True)
+
+    collate = lambda examples: collate_transducer_batch(examples, vocabs)
+    train_loader = build_loader(train_dataset, collate, args.batch_size, shuffle=True)
     valid_loader = (
-        build_loader(valid_dataset, vocabs, args.batch_size, shuffle=False)
+        build_loader(valid_dataset, collate, args.batch_size, shuffle=False)
         if len(valid_dataset) > 0
         else None
     )
@@ -433,129 +254,53 @@ def main() -> None:
         joint_hidden_dim=dims.joint_hidden_dim,
     ).to(device)
     optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=args.learning_rate,
-        weight_decay=args.weight_decay,
+        model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
     )
-    scaler = torch.amp.GradScaler("cuda", enabled=args.amp)
 
     start_epoch = 1
     if resume_checkpoint is not None:
-        model.load_state_dict(resume_checkpoint["model_state_dict"])
-        optimizer.load_state_dict(resume_checkpoint["optimizer_state_dict"])
-        start_epoch = int(resume_checkpoint["epoch"]) + 1
+        start_epoch = restore_training_state(model, optimizer, resume_checkpoint)
         print(f"resumed_from={args.resume} start_epoch={start_epoch}")
 
-    best_valid_loss = load_best_valid_loss(args.output_dir)
-    trim_metrics_log(args.output_dir, start_epoch)
-    for epoch in range(start_epoch, args.epochs + 1):
-        print(f"Epoch {epoch}/{args.epochs} started. Training on {len(train_loader)} batches...")
-        model.train()
-        train_losses: list[float] = []
-        
-        try:
-            from tqdm import tqdm
-            has_tqdm = True
-        except ImportError:
-            has_tqdm = False
-
-        if has_tqdm:
-            pbar = tqdm(train_loader, desc=f"Epoch {epoch}", leave=True)
-        else:
-            pbar = train_loader
-
-        for i, batch in enumerate(pbar):
-            batch = move_batch_to_device(batch, device)
-            optimizer.zero_grad(set_to_none=True)
-            
-            with torch.amp.autocast("cuda", enabled=args.amp):
-                loss = compute_rnnt_loss(model, batch, vocabs.blank_id)
-                
-            scaler.scale(loss).backward()
-            
-            if args.gradient_clip > 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.gradient_clip)
-                
-            scaler.step(optimizer)
-            scaler.update()
-            
-            loss_val = float(loss.item())
-            train_losses.append(loss_val)
-            if has_tqdm:
-                pbar.set_postfix(loss=f"{loss_val:.4f}")
-            elif i % 50 == 0:
-                print(f"  Batch {i}/{len(train_loader)}: loss={loss_val:.4f}")
-
-        train_loss = sum(train_losses) / len(train_losses)
-        valid_loss = (
-            evaluate_average_loss(model, valid_loader, vocabs.blank_id, device)
-            if valid_loader is not None
-            else train_loss
-        )
-        valid_cer = None
+    def cer_fn(epoch: int) -> float | None:
         if (
-            valid_dataset is not None
-            and args.valid_decode != "none"
-            and args.valid_cer_every > 0
-            and epoch % args.valid_cer_every == 0
+            valid_loader is None
+            or args.valid_decode == "none"
+            or args.valid_cer_every <= 0
+            or epoch % args.valid_cer_every != 0
         ):
-            valid_cer = evaluate_decode_cer(
-                model,
-                valid_dataset,
-                vocabs.output_vocab,
-                decoder=args.valid_decode,
-                max_samples=args.valid_cer_samples,
-                beam_width=args.valid_beam_width,
-                expansion_width=args.valid_expansion_width,
-            )
-
-        metrics = [
-            f"epoch={epoch}",
-            f"train_loss={train_loss:.4f}",
-            f"valid_loss={valid_loss:.4f}",
-        ]
-        if valid_cer is not None:
-            metrics.append(f"valid_cer={valid_cer:.4f}")
-            metrics.append(f"valid_decode={args.valid_decode}")
-            metrics.append(f"valid_cer_samples={args.valid_cer_samples}")
-        print(" ".join(metrics))
-
-        checkpoint_path = args.output_dir / "checkpoints" / f"epoch_{epoch:03d}.pt"
-        save_checkpoint(
-            checkpoint_path,
+            return None
+        return evaluate_decode_cer(
             model,
-            optimizer,
-            epoch,
-            train_loss,
-            valid_loss,
-            config,
+            valid_dataset,
+            vocabs.output_vocab,
+            decoder=args.valid_decode,
+            max_samples=args.valid_cer_samples,
+            beam_width=args.valid_beam_width,
+            expansion_width=args.valid_expansion_width,
         )
-        if valid_loss < best_valid_loss:
-            best_valid_loss = valid_loss
-            save_checkpoint(
-                args.output_dir / "checkpoints" / "best.pt",
-                model,
-                optimizer,
-                epoch,
-                train_loss,
-                valid_loss,
-                config,
-            )
 
-        # Write metrics to log and update curve plot
-        metrics_log_path = args.output_dir / "metrics.jsonl"
-        metrics_record = {
-            "epoch": epoch,
-            "train_loss": train_loss,
-            "valid_loss": valid_loss,
-        }
-        if valid_cer is not None:
-            metrics_record["valid_cer"] = valid_cer
-        with open(metrics_log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(metrics_record) + "\n")
-
-        plot_metrics(args.output_dir)
+    trainer = Trainer(
+        model=model,
+        optimizer=optimizer,
+        device=device,
+        output_dir=args.output_dir,
+        config=config,
+        amp=args.amp,
+    )
+    trainer.fit(
+        train_loader=train_loader,
+        epochs=args.epochs,
+        loss_fn=lambda m, batch: compute_rnnt_loss(m, batch, vocabs.blank_id),
+        start_epoch=start_epoch,
+        valid_loss_fn=(
+            (lambda: evaluate_average_loss(model, valid_loader, vocabs.blank_id, device))
+            if valid_loader is not None
+            else None
+        ),
+        cer_fn=cer_fn,
+        gradient_clip=args.gradient_clip,
+    )
 
 
 if __name__ == "__main__":

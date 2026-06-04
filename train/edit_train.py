@@ -5,17 +5,13 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 from dataclasses import dataclass
-import json
 import random
-from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader
 from torch.utils.data import Subset
 
 from model.edit_transducer import KairoEditTransducer
 from train.checkpoint import load_checkpoint
-from train.checkpoint import save_checkpoint
 from train.checkpoint import save_vocabs
 from train.checkpoint import write_json
 from train.edit_data import collate_edit_batch
@@ -23,11 +19,12 @@ from train.edit_data import load_train_valid_edit_datasets_and_vocabs
 from train.edit_loss import compute_edit_loss
 from train.edit_loss import evaluate_average_edit_loss
 from train.edit_validation import evaluate_edit_decode_cer
-from train.loss import move_batch_to_device
-from train.train import plot_metrics
-from train.train import select_device
-from train.train import split_dataset
-from train.train import trim_metrics_log
+from train.engine import Trainer
+from train.engine import add_common_args
+from train.engine import build_loader
+from train.engine import restore_training_state
+from train.engine import select_device
+from train.engine import split_dataset
 
 
 @dataclass(frozen=True)
@@ -66,54 +63,17 @@ class EditTrainConfig:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data", type=Path, required=True)
-    parser.add_argument("--valid-data", type=Path, default=None)
-    parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--batch-size", type=int, default=8)
+    add_common_args(parser)
+    # edit transducer 固有のフラグ。
     parser.add_argument("--input-embed-dim", type=int, default=64)
     parser.add_argument("--output-embed-dim", type=int, default=64)
     parser.add_argument("--action-embed-dim", type=int, default=32)
     parser.add_argument("--hidden-dim", type=int, default=128)
-    parser.add_argument("--learning-rate", type=float, default=1e-3)
-    parser.add_argument("--weight-decay", type=float, default=1e-2)
-    parser.add_argument("--validation-ratio", type=float, default=0.1)
-    parser.add_argument("--limit-examples", type=int, default=None)
-    parser.add_argument("--gradient-clip", type=float, default=1.0)
     parser.add_argument("--insert-loss-weight", type=float, default=1.0)
-    parser.add_argument(
-        "--valid-decode",
-        choices=["none", "greedy", "beam"],
-        default="none",
-    )
-    parser.add_argument("--valid-cer-samples", type=int, default=100)
-    parser.add_argument("--valid-cer-every", type=int, default=1)
-    parser.add_argument("--valid-beam-width", type=int, default=5)
-    parser.add_argument("--valid-expansion-width", type=int, default=5)
     parser.add_argument("--valid-max-actions", type=int, default=128)
     parser.add_argument("--edit-penalty", type=float, default=0.0)
     parser.add_argument("--insert-penalty", type=float, default=0.0)
-    parser.add_argument(
-        "--output-tokenizer",
-        choices=["char", "bpe"],
-        default="char",
-    )
-    parser.add_argument("--output-vocab-size", type=int, default=4000)
-    parser.add_argument("--output-min-token-frequency", type=int, default=2)
-    parser.add_argument("--amp", action="store_true")
-    parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--resume", type=Path, default=None)
     return parser.parse_args()
-
-
-def build_edit_loader(dataset, vocabs, batch_size: int, shuffle: bool) -> DataLoader:
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        collate_fn=lambda examples: collate_edit_batch(examples, vocabs),
-    )
 
 
 def main() -> None:
@@ -138,16 +98,16 @@ def main() -> None:
             )
     if explicit_valid_dataset is None:
         train_dataset, valid_dataset = split_dataset(
-            dataset,
-            validation_ratio=args.validation_ratio,
-            seed=args.seed,
+            dataset, validation_ratio=args.validation_ratio, seed=args.seed
         )
     else:
         train_dataset = dataset
         valid_dataset = explicit_valid_dataset
-    train_loader = build_edit_loader(train_dataset, vocabs, args.batch_size, shuffle=True)
+
+    collate = lambda examples: collate_edit_batch(examples, vocabs)
+    train_loader = build_loader(train_dataset, collate, args.batch_size, shuffle=True)
     valid_loader = (
-        build_edit_loader(valid_dataset, vocabs, args.batch_size, shuffle=False)
+        build_loader(valid_dataset, collate, args.batch_size, shuffle=False)
         if len(valid_dataset) > 0
         else None
     )
@@ -197,133 +157,62 @@ def main() -> None:
         hidden_dim=args.hidden_dim,
     ).to(device)
     optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=args.learning_rate,
-        weight_decay=args.weight_decay,
+        model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
     )
-    amp_enabled = args.amp and device.type == "cuda"
-    scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
 
     start_epoch = 1
     if args.resume:
         checkpoint = load_checkpoint(args.resume, map_location=device)
-        model.load_state_dict(checkpoint["model_state_dict"])
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        start_epoch = int(checkpoint["epoch"]) + 1
+        start_epoch = restore_training_state(model, optimizer, checkpoint)
 
-    best_valid_loss = float("inf")
-    trim_metrics_log(args.output_dir, start_epoch)
-    for epoch in range(start_epoch, args.epochs + 1):
-        print(f"Epoch {epoch}/{args.epochs} started. Training on {len(train_loader)} batches...")
-        model.train()
-        train_losses: list[float] = []
+    def cer_fn(epoch: int) -> float | None:
+        if (
+            valid_dataset is None
+            or args.valid_decode == "none"
+            or args.valid_cer_every <= 0
+            or epoch % args.valid_cer_every != 0
+        ):
+            return None
+        return evaluate_edit_decode_cer(
+            model,
+            valid_dataset,
+            vocabs.output_vocab,
+            decoder=args.valid_decode,
+            max_samples=args.valid_cer_samples,
+            beam_width=args.valid_beam_width,
+            expansion_width=args.valid_expansion_width,
+            max_actions=args.valid_max_actions,
+            edit_penalty=args.edit_penalty,
+            insert_penalty=args.insert_penalty,
+        )
 
-        try:
-            from tqdm import tqdm
-            has_tqdm = True
-        except ImportError:
-            has_tqdm = False
-
-        if has_tqdm:
-            pbar = tqdm(train_loader, desc=f"Edit Epoch {epoch}", leave=True)
-        else:
-            pbar = train_loader
-
-        for i, batch in enumerate(pbar):
-            batch = move_batch_to_device(batch, device)
-            optimizer.zero_grad(set_to_none=True)
-            with torch.amp.autocast("cuda", enabled=amp_enabled):
-                loss = compute_edit_loss(
-                    model,
-                    batch,
-                    insert_loss_weight=args.insert_loss_weight,
+    trainer = Trainer(
+        model=model,
+        optimizer=optimizer,
+        device=device,
+        output_dir=args.output_dir,
+        config=config,
+        amp=args.amp,
+    )
+    trainer.fit(
+        train_loader=train_loader,
+        epochs=args.epochs,
+        loss_fn=lambda m, batch: compute_edit_loss(
+            m, batch, insert_loss_weight=args.insert_loss_weight
+        ),
+        start_epoch=start_epoch,
+        valid_loss_fn=(
+            (
+                lambda: evaluate_average_edit_loss(
+                    model, valid_loader, device=device, insert_loss_weight=args.insert_loss_weight
                 )
-            scaler.scale(loss).backward()
-            if args.gradient_clip > 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.gradient_clip)
-            scaler.step(optimizer)
-            scaler.update()
-            loss_val = float(loss.item())
-            train_losses.append(loss_val)
-            if has_tqdm:
-                pbar.set_postfix(loss=f"{loss_val:.4f}")
-            elif i % 50 == 0:
-                print(f"  Batch {i}/{len(train_loader)}: loss={loss_val:.4f}")
-
-        train_loss = sum(train_losses) / len(train_losses)
-        valid_loss = (
-            evaluate_average_edit_loss(
-                model,
-                valid_loader,
-                device=device,
-                insert_loss_weight=args.insert_loss_weight,
             )
             if valid_loader is not None
-            else train_loss
-        )
-        valid_cer = None
-        if (
-            valid_dataset is not None
-            and args.valid_decode != "none"
-            and args.valid_cer_every > 0
-            and epoch % args.valid_cer_every == 0
-        ):
-            valid_cer = evaluate_edit_decode_cer(
-                model,
-                valid_dataset,
-                vocabs.output_vocab,
-                decoder=args.valid_decode,
-                max_samples=args.valid_cer_samples,
-                beam_width=args.valid_beam_width,
-                expansion_width=args.valid_expansion_width,
-                max_actions=args.valid_max_actions,
-                edit_penalty=args.edit_penalty,
-                insert_penalty=args.insert_penalty,
-            )
-        metrics = [
-            f"epoch={epoch}",
-            f"train_loss={train_loss:.4f}",
-            f"valid_loss={valid_loss:.4f}",
-        ]
-        if valid_cer is not None:
-            metrics.append(f"valid_cer={valid_cer:.4f}")
-            metrics.append(f"valid_decode={args.valid_decode}")
-            metrics.append(f"valid_cer_samples={args.valid_cer_samples}")
-        print(" ".join(metrics))
-
-        checkpoint_path = args.output_dir / "checkpoints" / f"epoch_{epoch:03d}.pt"
-        save_checkpoint(
-            checkpoint_path,
-            model,
-            optimizer,
-            epoch,
-            train_loss,
-            valid_loss,
-            config,
-        )
-        if valid_loss < best_valid_loss:
-            best_valid_loss = valid_loss
-            save_checkpoint(
-                args.output_dir / "checkpoints" / "best.pt",
-                model,
-                optimizer,
-                epoch,
-                train_loss,
-                valid_loss,
-                config,
-            )
-
-        metrics_record = {
-            "epoch": epoch,
-            "train_loss": train_loss,
-            "valid_loss": valid_loss,
-        }
-        if valid_cer is not None:
-            metrics_record["valid_cer"] = valid_cer
-        with (args.output_dir / "metrics.jsonl").open("a", encoding="utf-8") as file:
-            file.write(json.dumps(metrics_record) + "\n")
-        plot_metrics(args.output_dir)
+            else None
+        ),
+        cer_fn=cer_fn,
+        gradient_clip=args.gradient_clip,
+    )
 
 
 if __name__ == "__main__":
