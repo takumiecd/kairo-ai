@@ -181,7 +181,13 @@ def encode_refine_records(
     records: list[dict[str, str]],
     vocabs: TrainingVocabs,
     max_insertions_per_gap: int,
+    desc: str = "Encoding edit scripts",
 ) -> JsonlRefineDataset:
+    try:
+        from tqdm import tqdm
+        iterator = tqdm(records, desc=desc, leave=False)
+    except ImportError:
+        iterator = records
     return JsonlRefineDataset(
         [
             encode_refine_example(
@@ -191,7 +197,7 @@ def encode_refine_records(
                 vocabs=vocabs,
                 max_insertions_per_gap=max_insertions_per_gap,
             )
-            for record in records
+            for record in iterator
         ]
     )
 
@@ -206,18 +212,30 @@ def load_train_valid_refine_datasets_and_vocabs(
 ) -> tuple[JsonlRefineDataset, JsonlRefineDataset | None, TrainingVocabs]:
     train_records = load_jsonl_examples(train_path)
     valid_records = load_jsonl_examples(valid_path) if valid_path is not None else []
+    print(
+        f"Loaded {len(train_records)} train records"
+        + (f", {len(valid_records)} valid records" if valid_path is not None else "")
+    )
+    print(f"Building vocab (tokenizer={output_tokenizer}, size={output_vocab_size})...", flush=True)
     vocabs = build_refine_vocabs_from_records(
         train_records + valid_records,
         output_tokenizer=output_tokenizer,
         output_vocab_size=output_vocab_size,
         output_min_token_frequency=output_min_token_frequency,
     )
-    train_dataset = encode_refine_records(train_records, vocabs, max_insertions_per_gap)
+    print(f"Output vocab size: {len(vocabs.output_vocab.id_to_token)}", flush=True)
+    train_dataset = encode_refine_records(
+        train_records, vocabs, max_insertions_per_gap, desc="Encoding train"
+    )
     valid_dataset = (
-        encode_refine_records(valid_records, vocabs, max_insertions_per_gap)
+        encode_refine_records(
+            valid_records, vocabs, max_insertions_per_gap, desc="Encoding valid"
+        )
         if valid_path is not None
         else None
     )
+    print(f"Encoded train={len(train_dataset)}"
+          + (f" valid={len(valid_dataset)}" if valid_dataset is not None else ""), flush=True)
     return train_dataset, valid_dataset, vocabs
 
 
