@@ -330,6 +330,13 @@ def main() -> None:
         output_dir=args.output_dir,
         config=config,
         amp=args.amp,
+        lr_scheduler=args.lr_scheduler,
+        warmup_ratio=args.warmup_ratio,
+        warmup_steps=args.warmup_steps,
+        min_lr_ratio=args.min_lr_ratio,
+        resume_scheduler_state=(
+            resume_checkpoint.get("scheduler_state_dict") if resume_checkpoint else None
+        ),
     )
     trainer.fit(
         train_loader=train_loader,

@@ -32,19 +32,20 @@ def save_checkpoint(
     train_loss: float,
     valid_loss: float,
     config,
+    scheduler=None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "train_loss": train_loss,
-            "valid_loss": valid_loss,
-            "config": asdict(config),
-        },
-        path,
-    )
+    payload = {
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "train_loss": train_loss,
+        "valid_loss": valid_loss,
+        "config": asdict(config),
+    }
+    if scheduler is not None:
+        payload["scheduler_state_dict"] = scheduler.state_dict()
+    torch.save(payload, path)
 
 
 def load_checkpoint(path: Path, map_location=None) -> dict[str, Any]:

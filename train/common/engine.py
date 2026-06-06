@@ -25,6 +25,9 @@ from torch.utils.data import Subset
 from train.common.checkpoint import load_checkpoint
 from train.common.checkpoint import save_checkpoint
 from train.common.batch import move_batch_to_device
+from train.common.scheduler import SCHEDULER_CHOICES
+from train.common.scheduler import build_lr_scheduler
+from train.common.scheduler import resolve_warmup_steps
 
 
 # ----------------------------------------------------------------------
@@ -88,6 +91,30 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-2)
+    parser.add_argument(
+        "--lr-scheduler",
+        choices=SCHEDULER_CHOICES,
+        default="none",
+        help="Per-step LR schedule. 'none' keeps a constant LR.",
+    )
+    parser.add_argument(
+        "--warmup-ratio",
+        type=float,
+        default=0.05,
+        help="Linear warmup as a fraction of total steps (used when --warmup-steps is unset).",
+    )
+    parser.add_argument(
+        "--warmup-steps",
+        type=int,
+        default=None,
+        help="Explicit linear warmup steps (overrides --warmup-ratio).",
+    )
+    parser.add_argument(
+        "--min-lr-ratio",
+        type=float,
+        default=0.1,
+        help="Cosine floor as a fraction of the base LR.",
+    )
     parser.add_argument("--validation-ratio", type=float, default=0.1)
     parser.add_argument("--limit-examples", type=int, default=None)
     parser.add_argument("--gradient-clip", type=float, default=1.0)
@@ -236,6 +263,11 @@ class Trainer:
         output_dir: Path,
         config,
         amp: bool = False,
+        lr_scheduler: str = "none",
+        warmup_ratio: float = 0.05,
+        warmup_steps: int | None = None,
+        min_lr_ratio: float = 0.1,
+        resume_scheduler_state: dict | None = None,
     ) -> None:
         self.model = model
         self.optimizer = optimizer
@@ -244,6 +276,44 @@ class Trainer:
         self.config = config
         self.amp_enabled = amp and device.type == "cuda"
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.amp_enabled)
+        # scheduler は total_steps が確定する fit() で生成する。
+        self.lr_scheduler_name = lr_scheduler
+        self.warmup_ratio = warmup_ratio
+        self.warmup_steps = warmup_steps
+        self.min_lr_ratio = min_lr_ratio
+        self._resume_scheduler_state = resume_scheduler_state
+        self.scheduler = None
+
+    def _build_scheduler(self, train_loader: DataLoader, epochs: int, start_epoch: int) -> None:
+        """total_steps 確定後に scheduler を生成し、resume 位置に合わせる。"""
+        if self.lr_scheduler_name == "none":
+            self.scheduler = None
+            return
+
+        steps_per_epoch = max(1, len(train_loader))
+        total_steps = epochs * steps_per_epoch
+        warmup_steps = resolve_warmup_steps(total_steps, self.warmup_steps, self.warmup_ratio)
+        self.scheduler = build_lr_scheduler(
+            self.optimizer,
+            name=self.lr_scheduler_name,
+            total_steps=total_steps,
+            warmup_steps=warmup_steps,
+            min_lr_ratio=self.min_lr_ratio,
+        )
+        if self.scheduler is None:
+            return
+
+        if self._resume_scheduler_state is not None:
+            # 旧 run と scheduler 設定が一致している場合のみ正確に復元される。
+            self.scheduler.load_state_dict(self._resume_scheduler_state)
+        elif start_epoch > 1:
+            # 古い checkpoint（scheduler state 無し）から resume: step 数を前進させる。
+            for _ in range((start_epoch - 1) * steps_per_epoch):
+                self.scheduler.step()
+        print(
+            f"lr_scheduler={self.lr_scheduler_name} total_steps={total_steps} "
+            f"warmup_steps={warmup_steps} min_lr_ratio={self.min_lr_ratio}"
+        )
 
     def _train_one_epoch(
         self,
@@ -276,11 +346,16 @@ class Trainer:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), gradient_clip)
             self.scaler.step(self.optimizer)
             self.scaler.update()
+            if self.scheduler is not None:
+                self.scheduler.step()
 
             loss_val = float(loss.item())
             train_losses.append(loss_val)
             if has_tqdm:
-                pbar.set_postfix(loss=f"{loss_val:.4f}")
+                postfix = {"loss": f"{loss_val:.4f}"}
+                if self.scheduler is not None:
+                    postfix["lr"] = f"{self.optimizer.param_groups[0]['lr']:.2e}"
+                pbar.set_postfix(**postfix)
             elif i % 50 == 0:
                 print(f"  Batch {i}/{len(train_loader)}: loss={loss_val:.4f}")
 
@@ -311,6 +386,7 @@ class Trainer:
             train_loss,
             valid_loss,
             self.config,
+            self.scheduler,
         )
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
@@ -327,6 +403,8 @@ class Trainer:
         metrics_record = {"epoch": epoch, "train_loss": train_loss, "valid_loss": valid_loss}
         if valid_cer is not None:
             metrics_record["valid_cer"] = valid_cer
+        if self.scheduler is not None:
+            metrics_record["lr"] = float(self.optimizer.param_groups[0]["lr"])
         with (self.output_dir / "metrics.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps(metrics_record) + "\n")
         plot_metrics(self.output_dir)
@@ -345,6 +423,7 @@ class Trainer:
     ) -> None:
         best_valid_loss = load_best_valid_loss(self.output_dir)
         trim_metrics_log(self.output_dir, start_epoch)
+        self._build_scheduler(train_loader, epochs, start_epoch)
         for epoch in range(start_epoch, epochs + 1):
             train_loss = self._train_one_epoch(
                 train_loader, loss_fn, gradient_clip, epoch, epochs
