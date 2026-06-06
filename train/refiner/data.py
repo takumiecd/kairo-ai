@@ -14,15 +14,14 @@ edit transducer 用に作ったものへ <eos> / <plh> を末尾追加して拡�
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
-import json
-from pathlib import Path
 
 import torch
 from torch.utils.data import Dataset
 
 from dataset.vocab import CharVocab
-from dataset.vocab import vocab_from_token_to_id
+from train.common.cache import load_or_encode
+from train.common.checkpoint import has_saved_vocab
+from train.common.checkpoint import load_vocabs
 from train.common.data import TrainingVocabs
 from train.common.data import load_jsonl_examples
 from train.edit.data import DELETE
@@ -210,42 +209,6 @@ def encode_refine_records(
     )
 
 
-def save_refine_vocabs(vocabs: TrainingVocabs, vocab_dir) -> None:
-    vocab_dir = Path(vocab_dir)
-    vocab_dir.mkdir(parents=True, exist_ok=True)
-    for name, vocab in (("input_vocab", vocabs.input_vocab), ("output_vocab", vocabs.output_vocab)):
-        with (vocab_dir / f"{name}.json").open("w", encoding="utf-8") as f:
-            json.dump(vocab.to_dict(), f, ensure_ascii=False)
-
-
-def load_refine_vocabs(vocab_dir) -> TrainingVocabs:
-    """保存済みの語彙 JSON を読み戻す（<eos>/<plh> 込みで保存されている）。"""
-    vocab_dir = Path(vocab_dir)
-    with (vocab_dir / "input_vocab.json").open("r", encoding="utf-8") as f:
-        input_vocab = vocab_from_token_to_id(json.load(f))
-    with (vocab_dir / "output_vocab.json").open("r", encoding="utf-8") as f:
-        output_vocab = vocab_from_token_to_id(json.load(f))
-    return TrainingVocabs(input_vocab=input_vocab, output_vocab=output_vocab)
-
-
-def _has_saved_vocab(vocab_dir) -> bool:
-    vocab_dir = Path(vocab_dir)
-    return (vocab_dir / "input_vocab.json").exists() and (vocab_dir / "output_vocab.json").exists()
-
-
-def _data_fingerprint(path) -> str:
-    stat = Path(path).stat()
-    return f"{Path(path).name}-{stat.st_size}-{int(stat.st_mtime)}"
-
-
-def _vocab_fingerprint(vocabs: TrainingVocabs) -> str:
-    payload = json.dumps(
-        {"input": vocabs.input_vocab.id_to_token, "output": vocabs.output_vocab.id_to_token},
-        ensure_ascii=False,
-    )
-    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
-
-
 def _load_or_encode(
     path,
     records: list[dict[str, str]],
@@ -254,22 +217,18 @@ def _load_or_encode(
     cache_dir,
     split: str,
 ) -> JsonlRefineDataset:
-    """符号化結果を (データ指紋, 語彙指紋, K) をキーにキャッシュ。"""
-    if cache_dir is None:
-        return encode_refine_records(records, vocabs, max_insertions_per_gap, desc=f"Encoding {split}")
-
-    cache_dir = Path(cache_dir)
-    key = f"{split}-{_data_fingerprint(path)}-{_vocab_fingerprint(vocabs)}-K{max_insertions_per_gap}"
-    cache_file = cache_dir / f"{key}.pt"
-    if cache_file.exists():
-        print(f"Loading cached encoding: {cache_file}", flush=True)
-        return JsonlRefineDataset(torch.load(cache_file, weights_only=False))
-
-    dataset = encode_refine_records(records, vocabs, max_insertions_per_gap, desc=f"Encoding {split}")
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    torch.save(dataset.examples, cache_file)
-    print(f"Saved encoding cache: {cache_file}", flush=True)
-    return dataset
+    """符号化結果を (データ指紋, 語彙指紋, K) をキーにキャッシュ（common 実装）。"""
+    return load_or_encode(
+        path,
+        vocabs,
+        cache_dir,
+        split,
+        encode_fn=lambda: encode_refine_records(
+            records, vocabs, max_insertions_per_gap, desc=f"Encoding {split}"
+        ),
+        rebuild_fn=JsonlRefineDataset,
+        extra_key=f"K{max_insertions_per_gap}",
+    )
 
 
 def _filter_by_length(
@@ -318,9 +277,9 @@ def load_train_valid_refine_datasets_and_vocabs(
         f"Loaded {len(train_records)} train records"
         + (f", {len(valid_records)} valid records" if valid_path is not None else "")
     )
-    if vocab_dir is not None and _has_saved_vocab(vocab_dir):
+    if vocab_dir is not None and has_saved_vocab(vocab_dir):
         print(f"Reusing vocab from {vocab_dir}", flush=True)
-        vocabs = load_refine_vocabs(vocab_dir)
+        vocabs = load_vocabs(vocab_dir)
     else:
         sample_note = f", sample={vocab_sample}" if vocab_sample is not None else ""
         print(

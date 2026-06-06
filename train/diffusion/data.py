@@ -9,6 +9,9 @@ import torch
 from torch.utils.data import Dataset
 
 from dataset.vocab import CharVocab
+from train.common.cache import load_or_encode
+from train.common.checkpoint import has_saved_vocab
+from train.common.checkpoint import load_vocabs
 from train.common.data import TrainingVocabs
 from train.common.data import load_jsonl_examples
 from train.edit.data import build_edit_vocabs_from_records
@@ -114,6 +117,8 @@ def load_train_valid_diffusion_datasets_and_vocabs(
     output_vocab_size: int = 4000,
     output_min_token_frequency: int = 2,
     max_positions: int = 256,
+    vocab_dir=None,
+    cache_dir=None,
 ) -> tuple[JsonlDiffusionDataset, JsonlDiffusionDataset | None, TrainingVocabs]:
     print(f"Loading train records from {train_path}...", flush=True)
     train_records = load_jsonl_examples(train_path)
@@ -124,27 +129,47 @@ def load_train_valid_diffusion_datasets_and_vocabs(
         print(f"Loaded {len(valid_records)} valid records", flush=True)
     else:
         valid_records = []
-    print(
-        f"Building vocab (tokenizer={output_tokenizer}, size={output_vocab_size})...",
-        flush=True,
-    )
-    vocabs = build_diffusion_vocabs_from_records(
-        train_records + valid_records,
-        output_tokenizer=output_tokenizer,
-        output_vocab_size=output_vocab_size,
-        output_min_token_frequency=output_min_token_frequency,
-    )
+    if vocab_dir is not None and has_saved_vocab(vocab_dir):
+        print(f"Reusing vocab from {vocab_dir}", flush=True)
+        vocabs = load_vocabs(vocab_dir)
+    else:
+        print(
+            f"Building vocab (tokenizer={output_tokenizer}, size={output_vocab_size})...",
+            flush=True,
+        )
+        vocabs = build_diffusion_vocabs_from_records(
+            train_records + valid_records,
+            output_tokenizer=output_tokenizer,
+            output_vocab_size=output_vocab_size,
+            output_min_token_frequency=output_min_token_frequency,
+        )
     print(
         f"Built input vocab={len(vocabs.input_vocab.id_to_token)} "
         f"output vocab={len(vocabs.output_vocab.id_to_token)}",
         flush=True,
     )
-    train = encode_diffusion_records(
-        train_records, vocabs, max_positions, desc="Encoding train"
+    train = load_or_encode(
+        train_path,
+        vocabs,
+        cache_dir,
+        "train",
+        encode_fn=lambda: encode_diffusion_records(
+            train_records, vocabs, max_positions, desc="Encoding train"
+        ),
+        rebuild_fn=JsonlDiffusionDataset,
+        extra_key=f"P{max_positions}",
     )
     valid = (
-        encode_diffusion_records(
-            valid_records, vocabs, max_positions, desc="Encoding valid"
+        load_or_encode(
+            valid_path,
+            vocabs,
+            cache_dir,
+            "valid",
+            encode_fn=lambda: encode_diffusion_records(
+                valid_records, vocabs, max_positions, desc="Encoding valid"
+            ),
+            rebuild_fn=JsonlDiffusionDataset,
+            extra_key=f"P{max_positions}",
         )
         if valid_path is not None
         else None

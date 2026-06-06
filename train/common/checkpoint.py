@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 
+from dataset.vocab import vocab_from_token_to_id
 from train.common.data import TrainingVocabs
 
 
@@ -22,6 +23,23 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 def save_vocabs(output_dir: Path, vocabs: TrainingVocabs) -> None:
     write_json(output_dir / "input_vocab.json", vocabs.input_vocab.to_dict())
     write_json(output_dir / "output_vocab.json", vocabs.output_vocab.to_dict())
+
+
+def has_saved_vocab(vocab_dir) -> bool:
+    vocab_dir = Path(vocab_dir)
+    return (vocab_dir / "input_vocab.json").exists() and (
+        vocab_dir / "output_vocab.json"
+    ).exists()
+
+
+def load_vocabs(vocab_dir) -> TrainingVocabs:
+    """Read back the vocab JSONs written by ``save_vocabs`` (special tokens included)."""
+    vocab_dir = Path(vocab_dir)
+    with (vocab_dir / "input_vocab.json").open("r", encoding="utf-8") as file:
+        input_vocab = vocab_from_token_to_id(json.load(file))
+    with (vocab_dir / "output_vocab.json").open("r", encoding="utf-8") as file:
+        output_vocab = vocab_from_token_to_id(json.load(file))
+    return TrainingVocabs(input_vocab=input_vocab, output_vocab=output_vocab)
 
 
 def save_checkpoint(
