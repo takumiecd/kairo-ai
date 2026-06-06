@@ -44,6 +44,14 @@ class TrainConfig:
     encoder_hidden_dim: int
     prediction_hidden_dim: int
     joint_hidden_dim: int
+    encoder_type: str
+    prediction_type: str
+    encoder_layers: int
+    prediction_layers: int
+    num_heads: int
+    feedforward_dim: int | None
+    dropout: float
+    max_positions: int
     learning_rate: float
     weight_decay: float
     validation_ratio: float
@@ -84,6 +92,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--encoder-hidden-dim", type=int, default=None)
     parser.add_argument("--prediction-hidden-dim", type=int, default=None)
     parser.add_argument("--joint-hidden-dim", type=int, default=None)
+    # Encoder / Prediction の中身を切り替える（docs/MODEL_DESIGN.md 参照）。
+    parser.add_argument("--encoder-type", choices=["lstm", "transformer"], default="lstm")
+    parser.add_argument("--prediction-type", choices=["lstm", "transformer"], default="lstm")
+    parser.add_argument("--encoder-layers", type=int, default=2)
+    parser.add_argument("--prediction-layers", type=int, default=1)
+    parser.add_argument("--num-heads", type=int, default=4, help="Transformer attention heads.")
+    parser.add_argument("--feedforward-dim", type=int, default=None, help="Transformer FFN dim (default 4x model dim).")
+    parser.add_argument("--dropout", type=float, default=0.1, help="Transformer dropout.")
+    parser.add_argument("--max-positions", type=int, default=256, help="Transformer max sequence length.")
     parser.add_argument(
         "--max-len",
         type=int,
@@ -160,6 +177,14 @@ def main() -> None:
         args.encoder_hidden_dim = resume_dims.encoder_hidden_dim
         args.prediction_hidden_dim = resume_dims.prediction_hidden_dim
         args.joint_hidden_dim = resume_dims.joint_hidden_dim
+        args.encoder_type = resume_config.get("encoder_type", args.encoder_type)
+        args.prediction_type = resume_config.get("prediction_type", args.prediction_type)
+        args.encoder_layers = int(resume_config.get("encoder_layers", args.encoder_layers))
+        args.prediction_layers = int(resume_config.get("prediction_layers", args.prediction_layers))
+        args.num_heads = int(resume_config.get("num_heads", args.num_heads))
+        args.feedforward_dim = resume_config.get("feedforward_dim", args.feedforward_dim)
+        args.dropout = float(resume_config.get("dropout", args.dropout))
+        args.max_positions = int(resume_config.get("max_positions", args.max_positions))
         args.output_tokenizer = resume_config.get("output_tokenizer", args.output_tokenizer)
         args.output_vocab_size = int(
             resume_config.get("output_vocab_size", args.output_vocab_size)
@@ -221,6 +246,14 @@ def main() -> None:
         encoder_hidden_dim=dims.encoder_hidden_dim,
         prediction_hidden_dim=dims.prediction_hidden_dim,
         joint_hidden_dim=dims.joint_hidden_dim,
+        encoder_type=args.encoder_type,
+        prediction_type=args.prediction_type,
+        encoder_layers=args.encoder_layers,
+        prediction_layers=args.prediction_layers,
+        num_heads=args.num_heads,
+        feedforward_dim=args.feedforward_dim,
+        dropout=args.dropout,
+        max_positions=args.max_positions,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         validation_ratio=args.validation_ratio,
@@ -252,6 +285,16 @@ def main() -> None:
         encoder_hidden_dim=dims.encoder_hidden_dim,
         prediction_hidden_dim=dims.prediction_hidden_dim,
         joint_hidden_dim=dims.joint_hidden_dim,
+        encoder_type=args.encoder_type,
+        prediction_type=args.prediction_type,
+        encoder_layers=args.encoder_layers,
+        prediction_layers=args.prediction_layers,
+        num_heads=args.num_heads,
+        feedforward_dim=args.feedforward_dim,
+        dropout=args.dropout,
+        max_positions=args.max_positions,
+        input_pad_id=vocabs.input_vocab.token_to_id["<pad>"],
+        output_pad_id=vocabs.output_vocab.token_to_id["<pad>"],
     ).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay

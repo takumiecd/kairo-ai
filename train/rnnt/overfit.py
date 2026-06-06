@@ -24,6 +24,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--embed-dim", type=int, default=32)
     parser.add_argument("--hidden-dim", type=int, default=64)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--encoder-type", choices=["lstm", "transformer"], default="lstm")
+    parser.add_argument("--prediction-type", choices=["lstm", "transformer"], default="lstm")
+    parser.add_argument("--encoder-layers", type=int, default=2)
+    parser.add_argument("--prediction-layers", type=int, default=1)
     parser.add_argument(
         "--max-examples",
         type=int,
@@ -61,6 +65,12 @@ def main() -> None:
         output_vocab_size=len(vocabs.output_vocab.id_to_token),
         embed_dim=args.embed_dim,
         hidden_dim=args.hidden_dim,
+        encoder_type=args.encoder_type,
+        prediction_type=args.prediction_type,
+        encoder_layers=args.encoder_layers,
+        prediction_layers=args.prediction_layers,
+        input_pad_id=vocabs.input_vocab.token_to_id["<pad>"],
+        output_pad_id=vocabs.output_vocab.token_to_id["<pad>"],
     )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
 

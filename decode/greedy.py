@@ -49,6 +49,16 @@ def load_model_from_artifact(artifact_dir: Path, checkpoint: Path | None = None)
             config.get("prediction_hidden_dim", config["hidden_dim"])
         ),
         joint_hidden_dim=int(config.get("joint_hidden_dim", config["hidden_dim"])),
+        encoder_type=config.get("encoder_type", "lstm"),
+        prediction_type=config.get("prediction_type", "lstm"),
+        encoder_layers=int(config.get("encoder_layers", 2)),
+        prediction_layers=int(config.get("prediction_layers", 1)),
+        num_heads=int(config.get("num_heads", 4)),
+        feedforward_dim=config.get("feedforward_dim"),
+        dropout=float(config.get("dropout", 0.1)),
+        max_positions=int(config.get("max_positions", 256)),
+        input_pad_id=input_vocab.token_to_id["<pad>"],
+        output_pad_id=output_vocab.token_to_id["<pad>"],
     )
     model.load_state_dict(state["model_state_dict"])
     model.eval()

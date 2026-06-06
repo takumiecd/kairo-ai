@@ -1,9 +1,15 @@
 import torch
 import torch.nn as nn
 
+from model.transformer_encoder import TransformerSequenceEncoder
+
 class KairoTransducer(nn.Module):
     """
     ライブ変換のための Transformer-Transducer (RNN-T) モデル骨組み
+
+    Encoder / Prediction Network はそれぞれ ``"lstm"`` / ``"transformer"`` を
+    選べる。Joint Network と損失・デコード経路は共通なので、中身だけ差し替えて
+    A/B 比較できる。設計方針は ``docs/MODEL_DESIGN.md`` を参照。
     """
     def __init__(
         self,
@@ -16,6 +22,16 @@ class KairoTransducer(nn.Module):
         encoder_hidden_dim: int | None = None,
         prediction_hidden_dim: int | None = None,
         joint_hidden_dim: int | None = None,
+        encoder_type: str = "lstm",
+        prediction_type: str = "lstm",
+        encoder_layers: int = 2,
+        prediction_layers: int = 1,
+        num_heads: int = 4,
+        feedforward_dim: int | None = None,
+        dropout: float = 0.1,
+        max_positions: int = 256,
+        input_pad_id: int = 0,
+        output_pad_id: int = 0,
     ):
         super().__init__()
         input_embed_dim = input_embed_dim or int(embed_dim)
@@ -23,37 +39,81 @@ class KairoTransducer(nn.Module):
         encoder_hidden_dim = encoder_hidden_dim or int(hidden_dim)
         prediction_hidden_dim = prediction_hidden_dim or int(hidden_dim)
         joint_hidden_dim = joint_hidden_dim or int(hidden_dim)
-        
+        self.encoder_type = encoder_type
+        self.prediction_type = prediction_type
+
         # 1. Encoder (Acoustic Modelに相当)
-        # ユーザーが打ったローマ字を処理する
-        self.encoder_emb = nn.Embedding(input_vocab_size, input_embed_dim)
-        # 本格実装時はTransformerEncoder等に変更
-        self.encoder_lstm = nn.LSTM(input_embed_dim, encoder_hidden_dim, num_layers=2, batch_first=True)
-        
+        # ユーザーが打ったローマ字を処理する。入力は確定済みなので双方向(未来を見てよい)。
+        if encoder_type == "lstm":
+            self.encoder_emb = nn.Embedding(input_vocab_size, input_embed_dim)
+            self.encoder_lstm = nn.LSTM(input_embed_dim, encoder_hidden_dim, num_layers=encoder_layers, batch_first=True)
+        elif encoder_type == "transformer":
+            self.encoder_transformer = TransformerSequenceEncoder(
+                vocab_size=input_vocab_size,
+                embed_dim=input_embed_dim,
+                model_dim=encoder_hidden_dim,
+                pad_id=input_pad_id,
+                num_layers=encoder_layers,
+                num_heads=num_heads,
+                feedforward_dim=feedforward_dim,
+                dropout=dropout,
+                max_positions=max_positions,
+                causal=False,
+            )
+        else:
+            raise ValueError(f"unknown encoder_type: {encoder_type!r}")
+
         # 2. Prediction Network (Language Modelに相当)
-        # これまでに出力した日本語(確定済み文字)を処理する
-        self.pred_emb = nn.Embedding(output_vocab_size, output_embed_dim)
-        # 本格実装時はTransformerDecoderやLSTMに変更
-        self.pred_lstm = nn.LSTM(output_embed_dim, prediction_hidden_dim, num_layers=1, batch_first=True)
-        
+        # これまでに出力した日本語(確定済み文字)を処理する。逐次生成なので causal。
+        if prediction_type == "lstm":
+            self.pred_emb = nn.Embedding(output_vocab_size, output_embed_dim)
+            self.pred_lstm = nn.LSTM(output_embed_dim, prediction_hidden_dim, num_layers=prediction_layers, batch_first=True)
+        elif prediction_type == "transformer":
+            self.pred_transformer = TransformerSequenceEncoder(
+                vocab_size=output_vocab_size,
+                embed_dim=output_embed_dim,
+                model_dim=prediction_hidden_dim,
+                pad_id=output_pad_id,
+                num_layers=prediction_layers,
+                num_heads=num_heads,
+                feedforward_dim=feedforward_dim,
+                dropout=dropout,
+                max_positions=max_positions,
+                causal=True,
+            )
+        else:
+            raise ValueError(f"unknown prediction_type: {prediction_type!r}")
+
         # 3. Joint Network
         # Encoderの特徴量とPrediction Networkの特徴量を結合して最終予測
         self.joint_fc1 = nn.Linear(encoder_hidden_dim + prediction_hidden_dim, joint_hidden_dim)
         self.joint_fc2 = nn.Linear(joint_hidden_dim, output_vocab_size)
-        
+
+    def encode(self, x):
+        """x: (B, T_x) → エンコーダ特徴 (B, T_x, encoder_hidden_dim)。"""
+        if self.encoder_type == "lstm":
+            enc_out, _ = self.encoder_lstm(self.encoder_emb(x))
+            return enc_out
+        return self.encoder_transformer(x)
+
+    def predict(self, y):
+        """y: (B, T_y) → Prediction 特徴 (B, T_y, prediction_hidden_dim)。"""
+        if self.prediction_type == "lstm":
+            pred_out, _ = self.pred_lstm(self.pred_emb(y))
+            return pred_out
+        return self.pred_transformer(y)
+
     def forward(self, x, y):
         """
         x: 入力ローマ字のテンソル (Batch, Time_x)
         y: 出力済み日本語のテンソル (Batch, Time_y)
         """
         # --- Encoder ---
-        x_emb = self.encoder_emb(x)
-        enc_out, _ = self.encoder_lstm(x_emb) # (Batch, Time_x, Hidden)
-        
+        enc_out = self.encode(x)  # (Batch, Time_x, Hidden)
+
         # --- Prediction Network ---
-        y_emb = self.pred_emb(y)
-        pred_out, _ = self.pred_lstm(y_emb)   # (Batch, Time_y, Hidden)
-        
+        pred_out = self.predict(y)  # (Batch, Time_y, Hidden)
+
         # --- Joint Network ---
         # 計算を効率化するため、ブロードキャストで結合 (Batch, Time_x, Time_y, Hidden*2)
         enc_out_exp = enc_out.unsqueeze(2)    # (B, T_x, 1, H)
