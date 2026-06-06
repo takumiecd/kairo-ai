@@ -308,8 +308,17 @@ class Trainer:
             self.scheduler.load_state_dict(self._resume_scheduler_state)
         elif start_epoch > 1:
             # 古い checkpoint（scheduler state 無し）から resume: step 数を前進させる。
-            for _ in range((start_epoch - 1) * steps_per_epoch):
-                self.scheduler.step()
+            # optimizer.step 前の空回しなので PyTorch の順序警告は抑制する。
+            import warnings
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                for _ in range((start_epoch - 1) * steps_per_epoch):
+                    self.scheduler.step()
+        # 再構築直後の optimizer.lr は step0 値に化けているので、復元位置の
+        # lr へ即時同期する（resume 後の最初の 1 バッチが誤 lr で進むのを防ぐ）。
+        for group, lr in zip(self.optimizer.param_groups, self.scheduler.get_last_lr()):
+            group["lr"] = lr
         print(
             f"lr_scheduler={self.lr_scheduler_name} total_steps={total_steps} "
             f"warmup_steps={warmup_steps} min_lr_ratio={self.min_lr_ratio}"
