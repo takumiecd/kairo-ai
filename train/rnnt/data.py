@@ -8,6 +8,8 @@ from pathlib import Path
 import torch
 from torch.utils.data import Dataset
 
+from train.common.checkpoint import has_saved_vocab
+from train.common.checkpoint import load_vocabs
 from train.common.data import TrainingVocabs
 from train.common.data import build_vocabs_from_records
 from train.common.data import load_jsonl_examples
@@ -62,6 +64,7 @@ def load_train_valid_datasets_and_vocabs(
     output_tokenizer: str = "char",
     output_vocab_size: int = 4000,
     output_min_token_frequency: int = 2,
+    vocab_dir=None,
 ) -> tuple[JsonlTransducerDataset, JsonlTransducerDataset | None, TrainingVocabs]:
     train_records = load_jsonl_examples(train_path)
     valid_records = load_jsonl_examples(valid_path) if valid_path is not None else []
@@ -74,12 +77,16 @@ def load_train_valid_datasets_and_vocabs(
             r for r in valid_records
             if len(r["input"]) <= max_len and len(r["target"]) <= max_len
         ]
-    vocabs = build_vocabs_from_records(
-        train_records + valid_records,
-        output_tokenizer=output_tokenizer,
-        output_vocab_size=output_vocab_size,
-        output_min_token_frequency=output_min_token_frequency,
-    )
+    if vocab_dir is not None and has_saved_vocab(vocab_dir):
+        print(f"Reusing vocab from {vocab_dir}", flush=True)
+        vocabs = load_vocabs(vocab_dir)
+    else:
+        vocabs = build_vocabs_from_records(
+            train_records + valid_records,
+            output_tokenizer=output_tokenizer,
+            output_vocab_size=output_vocab_size,
+            output_min_token_frequency=output_min_token_frequency,
+        )
     train_dataset = encode_records(train_records, vocabs)
     valid_dataset = encode_records(valid_records, vocabs) if valid_path is not None else None
     return train_dataset, valid_dataset, vocabs

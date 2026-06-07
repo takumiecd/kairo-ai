@@ -1,5 +1,6 @@
 import unittest
 
+from train.common.checkpoint import save_vocabs
 from train.common.data import build_vocabs_from_records
 from train.rnnt.data import collate_transducer_batch
 from train.rnnt.data import encode_records
@@ -51,6 +52,35 @@ class TrainDataTest(unittest.TestCase):
         self.assertEqual(len(train_dataset), 1)
         self.assertEqual(len(valid_dataset), 1)
         self.assertIn("確", vocabs.output_vocab.token_to_id)
+
+    def test_load_train_valid_datasets_reuses_saved_vocab(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            train_path = tmp_path / "train.jsonl"
+            valid_path = tmp_path / "valid.jsonl"
+            vocab_dir = tmp_path / "vocab"
+            write_jsonl(train_path, [{"input": "abc", "target": "修正"}])
+            write_jsonl(valid_path, [{"input": "xyz", "target": "確認"}])
+
+            saved_vocabs = build_vocabs_from_records(
+                [{"input": "abc", "target": "修正"}]
+            )
+            save_vocabs(vocab_dir, saved_vocabs)
+
+            train_dataset, valid_dataset, vocabs = load_train_valid_datasets_and_vocabs(
+                train_path,
+                valid_path,
+                vocab_dir=vocab_dir,
+            )
+
+        self.assertEqual(len(train_dataset), 1)
+        self.assertEqual(len(valid_dataset), 1)
+        self.assertEqual(vocabs.output_vocab.id_to_token, saved_vocabs.output_vocab.id_to_token)
+        self.assertNotIn("確", vocabs.output_vocab.token_to_id)
+        self.assertIn(saved_vocabs.output_vocab.token_to_id["<unk>"], valid_dataset[0].target_ids)
 
     def test_build_vocabs_supports_bpe_output_tokenizer(self):
         records = [

@@ -107,6 +107,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Filter out examples where input or target length exceeds this limit.",
     )
+    parser.add_argument(
+        "--vocab",
+        type=str,
+        default=None,
+        help="Reuse a saved vocab dir (input_vocab.json/output_vocab.json) instead of rebuilding.",
+    )
     return parser.parse_args()
 
 
@@ -200,6 +206,9 @@ def main() -> None:
             f"joint_hidden_dim={args.joint_hidden_dim}"
         )
     dims = resolve_model_dims(args)
+    vocab_dir = args.vocab
+    if vocab_dir is None and args.resume is not None:
+        vocab_dir = args.output_dir
 
     dataset, explicit_valid_dataset, vocabs = load_train_valid_datasets_and_vocabs(
         args.data,
@@ -208,6 +217,7 @@ def main() -> None:
         output_tokenizer=args.output_tokenizer,
         output_vocab_size=args.output_vocab_size,
         output_min_token_frequency=args.output_min_token_frequency,
+        vocab_dir=vocab_dir,
     )
     if args.limit_examples is not None:
         dataset = Subset(dataset, range(min(args.limit_examples, len(dataset))))
@@ -273,10 +283,6 @@ def main() -> None:
         max_len=args.max_len,
         amp=args.amp,
     )
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    write_json(args.output_dir / "config.json", asdict(config))
-    save_vocabs(args.output_dir, vocabs)
-
     model = KairoTransducer(
         input_vocab_size=len(vocabs.input_vocab.id_to_token),
         output_vocab_size=len(vocabs.output_vocab.id_to_token),
@@ -304,6 +310,10 @@ def main() -> None:
     if resume_checkpoint is not None:
         start_epoch = restore_training_state(model, optimizer, resume_checkpoint)
         print(f"resumed_from={args.resume} start_epoch={start_epoch}")
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    write_json(args.output_dir / "config.json", asdict(config))
+    save_vocabs(args.output_dir, vocabs)
 
     def cer_fn(epoch: int) -> float | None:
         if (
