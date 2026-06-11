@@ -45,6 +45,38 @@ python -m pip install .
 python -m unittest discover -s tests
 ```
 
+uv を使う場合は `uv sync` だけで環境が整います（以下のコマンドは `uv run python ...` に読み替え）。
+
+## 🤗 学習済みモデルを試す（Quickstart）
+
+学習済みモデル **rnnt-trf-v1** を [Hugging Face](https://huggingface.co/takumiecd/rnnt-trf-v1) で公開しています。
+Wikipedia・Tatoeba・青空文庫から構築した約30万ペアで学習したモデルで、checkpoint・config・vocab が揃っているため、このリポジトリのコードだけですぐ推論できます（CPUで動作可）。
+
+```bash
+# モデル一式（checkpoint + config + vocab）をダウンロード
+pip install -U huggingface_hub
+hf download takumiecd/rnnt-trf-v1 --local-dir artifacts/rnnt-trf-v1
+
+# greedy decode で推論
+python -m decode.greedy \
+  --artifact-dir artifacts/rnnt-trf-v1 \
+  --checkpoint artifacts/rnnt-trf-v1/epoch_020.pt \
+  --input "wagahaihanekodearu."
+# => 吾輩は猫である。
+```
+
+タイプミスを含む入力も復元できます。
+
+```bash
+python -m decode.greedy \
+  --artifact-dir artifacts/rnnt-trf-v1 \
+  --checkpoint artifacts/rnnt-trf-v1/epoch_020.pt \
+  --input "wagaahaihanekodearu."   # 'a' が重複したtypo入り
+# => 吾輩は猫である。
+```
+
+モデルの詳細（データセット構成・学習設定・評価結果）は [モデルカード](https://huggingface.co/takumiecd/rnnt-trf-v1) を参照してください。
+
 ## 🧪 データセット生成
 まずはエンジニア向けの synthetic examples から、ローマ字入力と漢字かな混じり出力の JSONL を生成します。
 
