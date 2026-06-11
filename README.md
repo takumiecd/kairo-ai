@@ -36,7 +36,17 @@
 - `tests/`: ユニットテスト。
 
 ## 🚀 環境構築
-Anaconda/Miniconda で Python 3.11 環境を作成します。
+[uv](https://docs.astral.sh/uv/) で管理します。`uv.lock` をコミットしているため、開発環境（macOS）と学習サーバー（Linux/CUDA）で同一の依存バージョンが再現されます。
+
+```bash
+uv sync
+uv run python -m unittest discover -s tests
+```
+
+以降のコマンド例の `python -m ...` は `uv run python -m ...` と読み替えてください。
+
+<details>
+<summary>conda を使う場合（代替手段）</summary>
 
 ```bash
 conda create -y -n kairo-ai python=3.11 pip
@@ -45,7 +55,9 @@ python -m pip install .
 python -m unittest discover -s tests
 ```
 
-uv を使う場合は `uv sync` だけで環境が整います（以下のコマンドは `uv run python ...` に読み替え）。
+※ lockファイルによるバージョン固定は効かないため、再現性が必要な場面では uv を推奨します。
+
+</details>
 
 ## 🤗 学習済みモデルを試す（Quickstart）
 
@@ -54,8 +66,8 @@ Wikipedia・Tatoeba・青空文庫から構築した約30万ペアで学習し�
 
 ```bash
 # モデル一式（checkpoint + config + vocab）をダウンロード
-pip install -U huggingface_hub
-hf download takumiecd/rnnt-trf-v1 --local-dir artifacts/rnnt-trf-v1
+# （hf CLI は uv sync で入る huggingface_hub に同梱）
+uv run hf download takumiecd/rnnt-trf-v1 --local-dir artifacts/rnnt-trf-v1
 
 # greedy decode で推論
 python -m decode.greedy \
