@@ -15,6 +15,7 @@ dependencies = [
     "tqdm>=4.65.0",
     "numpy>=1.24.0",
     "pykakasi>=2.2.1", # かな -> ローマ字変換用
+    "matplotlib>=3.10.9",
 ]
 
 [build-system]
