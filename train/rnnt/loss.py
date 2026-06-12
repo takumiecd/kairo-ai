@@ -28,12 +28,18 @@ def evaluate_average_loss(
     loader: DataLoader,
     blank_id: int,
     device: torch.device | None = None,
+    amp: bool = False,
 ) -> float:
     model.eval()
     losses: list[float] = []
     for batch in loader:
         if device is not None:
             batch = move_batch_to_device(batch, device)
-        losses.append(float(compute_rnnt_loss(model, batch, blank_id).item()))
+        with torch.amp.autocast(
+            "cuda",
+            enabled=amp and device is not None and device.type == "cuda",
+        ):
+            loss = compute_rnnt_loss(model, batch, blank_id)
+        losses.append(float(loss.item()))
     model.train()
     return sum(losses) / len(losses)

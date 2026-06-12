@@ -204,7 +204,7 @@ class RnntBatchSampler(Sampler[list[int]]):
 
     ``sort_lattice`` is deterministic and useful for reproducible speed checks.
     ``bucket_lattice`` is the training default candidate: sort by lattice size,
-    split into buckets, then shuffle buckets and examples each epoch.
+    split into buckets, then shuffle length-homogeneous batches each epoch.
     """
 
     def __init__(
@@ -235,26 +235,33 @@ class RnntBatchSampler(Sampler[list[int]]):
 
     def __iter__(self):
         if self.order == "sort_lattice":
-            ordered = list(self.sorted_indexes)
+            batches = self._build_batches(list(self.sorted_indexes))
         else:
             rng = random.Random(self.seed + self.epoch)
             buckets = [
                 list(self.sorted_indexes[start : start + self.bucket_size])
                 for start in range(0, len(self.sorted_indexes), self.bucket_size)
             ]
-            rng.shuffle(buckets)
-            ordered = []
+            batches = []
             for bucket in buckets:
-                rng.shuffle(bucket)
-                ordered.extend(bucket)
+                if self.max_batch_lattice_cells is None:
+                    rng.shuffle(bucket)
+                bucket_batches = self._build_batches(bucket)
+                rng.shuffle(bucket_batches)
+                batches.extend(bucket_batches)
+            rng.shuffle(batches)
             self.epoch += 1
 
-        yield from self._build_batches(ordered)
+        yield from batches
 
     def __len__(self) -> int:
-        if self.max_batch_lattice_cells is not None:
-            return len(list(self._build_batches(list(self.sorted_indexes))))
-        return (len(self.sorted_indexes) + self.batch_size - 1) // self.batch_size
+        if self.order == "sort_lattice":
+            return len(self._build_batches(list(self.sorted_indexes)))
+        buckets = [
+            list(self.sorted_indexes[start : start + self.bucket_size])
+            for start in range(0, len(self.sorted_indexes), self.bucket_size)
+        ]
+        return sum(len(self._build_batches(bucket)) for bucket in buckets)
 
     def _padded_lattice_cells(self, batch: list[int]) -> int:
         if not batch:
@@ -263,11 +270,12 @@ class RnntBatchSampler(Sampler[list[int]]):
         max_target = max(self.target_lengths[index] for index in batch)
         return len(batch) * max_input * (max_target + 1)
 
-    def _build_batches(self, ordered: list[int]):
+    def _build_batches(self, ordered: list[int]) -> list[list[int]]:
+        batches: list[list[int]] = []
         if self.max_batch_lattice_cells is None:
             for start in range(0, len(ordered), self.batch_size):
-                yield ordered[start : start + self.batch_size]
-            return
+                batches.append(ordered[start : start + self.batch_size])
+            return batches
 
         batch: list[int] = []
         for index in ordered:
@@ -279,12 +287,13 @@ class RnntBatchSampler(Sampler[list[int]]):
                     or self._padded_lattice_cells(candidate) > self.max_batch_lattice_cells
                 )
             ):
-                yield batch
+                batches.append(batch)
                 batch = [index]
             else:
                 batch = candidate
         if batch:
-            yield batch
+            batches.append(batch)
+        return batches
 
 
 def build_rnnt_train_loader(
@@ -306,6 +315,27 @@ def build_rnnt_train_loader(
             order=batch_order,
             seed=seed,
             bucket_size=bucket_size,
+            max_batch_lattice_cells=max_batch_lattice_cells,
+        ),
+        collate_fn=collate,
+    )
+
+
+def build_rnnt_eval_loader(
+    dataset,
+    collate,
+    batch_size: int,
+    max_batch_lattice_cells: int | None,
+) -> DataLoader:
+    if max_batch_lattice_cells is None:
+        return build_loader(dataset, collate, batch_size, shuffle=False)
+    return DataLoader(
+        dataset,
+        batch_sampler=RnntBatchSampler(
+            dataset,
+            batch_size=batch_size,
+            order="sort_lattice",
+            seed=0,
             max_batch_lattice_cells=max_batch_lattice_cells,
         ),
         collate_fn=collate,
@@ -392,7 +422,12 @@ def main() -> None:
         max_batch_lattice_cells=args.max_batch_lattice_cells,
     )
     valid_loader = (
-        build_loader(valid_dataset, collate, args.batch_size, shuffle=False)
+        build_rnnt_eval_loader(
+            valid_dataset,
+            collate,
+            batch_size=args.batch_size,
+            max_batch_lattice_cells=args.max_batch_lattice_cells,
+        )
         if len(valid_dataset) > 0
         else None
     )
@@ -517,7 +552,15 @@ def main() -> None:
         loss_fn=lambda m, batch: compute_rnnt_loss(m, batch, vocabs.blank_id),
         start_epoch=start_epoch,
         valid_loss_fn=(
-            (lambda: evaluate_average_loss(model, valid_loader, vocabs.blank_id, device))
+            (
+                lambda: evaluate_average_loss(
+                    model,
+                    valid_loader,
+                    vocabs.blank_id,
+                    device,
+                    amp=args.amp,
+                )
+            )
             if valid_loader is not None
             else None
         ),
