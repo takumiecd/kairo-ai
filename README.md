@@ -191,6 +191,33 @@ python -m train.rnnt.train \
   --resume artifacts/run1/checkpoints/epoch_010.pt
 ```
 
+## ⏱️ Benchmark
+
+RNN-T は学習時に `batch × input_length × target_length × vocab` の格子を作るため、
+単純な parameter 数だけでは速度を判断できません。`bench.rnnt` で、同じartifactに
+対して学習1 stepの実測とdecodeレイテンシをまとめて測ります。
+
+```bash
+python -m bench.rnnt \
+  --artifact-dir artifacts/rnnt-trf-v1 \
+  --data data/combined/valid.jsonl \
+  --device cuda \
+  --batch-size 16 \
+  --train-batches 50 \
+  --decode both \
+  --prefix-decode \
+  --decode-samples 100 \
+  --json-output artifacts/rnnt-trf-v1/bench_cuda.json
+```
+
+主に見る値:
+
+- `train_step.step_ms.p50/p95`: 1 training step のレイテンシ
+- `train_step.lattice_cells_per_sec`: RNN-T格子をどれだけ処理できているか
+- `decode_greedy.latency.p95_ms`: 入力中に毎回走らせる場合の体感上限
+- `decode_beam.latency.p95_ms`: 矢印候補を裏で出すときの重さ
+- `decode_greedy_prefix.latency.p95_ms`: 1キーごとの再変換に近いライブIME指標
+
 ## 🔎 Greedy Decode
 学習済みartifactからモデルとvocabを復元し、greedy decodeで予測文字列を確認します。
 
