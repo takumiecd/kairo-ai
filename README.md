@@ -69,10 +69,9 @@ Wikipedia・Tatoeba・青空文庫から構築した約30万ペアで学習し�
 # （hf CLI は uv sync で入る huggingface_hub に同梱）
 uv run hf download takumiecd/kairo-rnnt-trf-v1 --local-dir artifacts/rnnt-trf-v1
 
-# greedy decode で推論
+# greedy decode で推論（デフォルトで checkpoints/best.pt が使われる）
 python -m decode.greedy \
   --artifact-dir artifacts/rnnt-trf-v1 \
-  --checkpoint artifacts/rnnt-trf-v1/epoch_020.pt \
   --input "wagahaihanekodearu."
 # => 吾輩は猫である。
 ```
@@ -82,7 +81,6 @@ python -m decode.greedy \
 ```bash
 python -m decode.greedy \
   --artifact-dir artifacts/rnnt-trf-v1 \
-  --checkpoint artifacts/rnnt-trf-v1/epoch_020.pt \
   --input "wagaahaihanekodearu."   # 'a' が重複したtypo入り
 # => 吾輩は猫である。
 ```
