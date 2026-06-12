@@ -12,6 +12,13 @@ from train.rnnt.train import split_dataset
 from train.rnnt.train import load_best_valid_loss
 from train.rnnt.train import get_resume_model_dims
 from train.rnnt.train import ModelDims
+from train.rnnt.train import RnntBatchSampler
+
+
+@dataclass(frozen=True)
+class DummyRnntExample:
+    input_ids: list[int]
+    target_ids: list[int]
 
 
 class TrainEntrypointTest(unittest.TestCase):
@@ -120,6 +127,38 @@ class TrainEntrypointTest(unittest.TestCase):
                 joint_hidden_dim=320,
             ),
         )
+
+    def test_rnnt_batch_sampler_sorts_by_lattice_size(self):
+        dataset = [
+            DummyRnntExample([1] * 4, [2] * 3),
+            DummyRnntExample([1], [2]),
+            DummyRnntExample([1] * 3, [2]),
+        ]
+        sampler = RnntBatchSampler(dataset, batch_size=2, order="sort_lattice", seed=0)
+
+        batches = list(sampler)
+
+        self.assertEqual(batches, [[1, 2], [0]])
+
+    def test_rnnt_bucket_sampler_changes_order_between_epochs(self):
+        dataset = [
+            DummyRnntExample([1] * (index + 1), [2])
+            for index in range(12)
+        ]
+        sampler = RnntBatchSampler(
+            dataset,
+            batch_size=3,
+            order="bucket_lattice",
+            seed=0,
+            bucket_size=6,
+        )
+
+        first = list(sampler)
+        second = list(sampler)
+
+        self.assertNotEqual(first, second)
+        self.assertEqual(sorted(index for batch in first for index in batch), list(range(12)))
+        self.assertEqual(sorted(index for batch in second for index in batch), list(range(12)))
 
 
 if __name__ == "__main__":

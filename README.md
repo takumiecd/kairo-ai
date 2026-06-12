@@ -178,6 +178,39 @@ python -m train.rnnt.train \
   --valid-cer-every 5
 ```
 
+CUDA環境で本格学習する場合は、RNN-T格子サイズでbucket化するとpaddingが減り、
+学習速度が大きく改善します。`rnnt-trf-v1` 相当のTransformer構成でv2を回す例:
+
+```bash
+python -m train.rnnt.train \
+  --data data/combined/all_sources/train.jsonl \
+  --valid-data data/combined/all_sources/valid.jsonl \
+  --output-dir artifacts/rnnt-trf-v2 \
+  --epochs 20 \
+  --batch-size 128 \
+  --device cuda \
+  --amp \
+  --batch-order bucket_lattice \
+  --encoder-type transformer \
+  --prediction-type transformer \
+  --input-embed-dim 96 \
+  --output-embed-dim 256 \
+  --encoder-hidden-dim 256 \
+  --prediction-hidden-dim 256 \
+  --joint-hidden-dim 256 \
+  --encoder-layers 4 \
+  --prediction-layers 2 \
+  --num-heads 4 \
+  --feedforward-dim 1024 \
+  --dropout 0.1 \
+  --max-positions 256 \
+  --learning-rate 0.001 \
+  --lr-scheduler cosine \
+  --valid-decode greedy \
+  --valid-cer-samples 100 \
+  --valid-cer-every 5
+```
+
 学習成果物は `artifacts/run1/` 以下に保存されます。
 
 途中から再開する場合:

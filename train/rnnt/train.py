@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import random
 
 import torch
+from torch.utils.data import DataLoader
+from torch.utils.data import Sampler
 from torch.utils.data import Subset
 
 from model.transducer import KairoTransducer
@@ -69,6 +71,8 @@ class TrainConfig:
     output_vocab_size: int
     output_min_token_frequency: int
     max_len: int | None
+    batch_order: str
+    bucket_size: int | None
     amp: bool
 
 
@@ -112,6 +116,21 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Reuse a saved vocab dir (input_vocab.json/output_vocab.json) instead of rebuilding.",
+    )
+    parser.add_argument(
+        "--batch-order",
+        choices=["random", "sort_lattice", "bucket_lattice"],
+        default="random",
+        help=(
+            "Training batch order. bucket_lattice groups examples with similar "
+            "RNN-T lattice sizes to reduce padding while keeping shuffled batches."
+        ),
+    )
+    parser.add_argument(
+        "--bucket-size",
+        type=int,
+        default=None,
+        help="Examples per length bucket for --batch-order bucket_lattice (default: batch_size * 50).",
     )
     return parser.parse_args()
 
@@ -163,6 +182,86 @@ def get_resume_model_dims(checkpoint: dict) -> ModelDims:
         encoder_hidden_dim=int(state_dict["encoder_lstm.weight_hh_l0"].shape[1]),
         prediction_hidden_dim=int(state_dict["pred_lstm.weight_hh_l0"].shape[1]),
         joint_hidden_dim=int(state_dict["joint_fc1.weight"].shape[0]),
+    )
+
+
+def rnnt_lattice_size(example) -> int:
+    return len(example.input_ids) * (len(example.target_ids) + 1)
+
+
+class RnntBatchSampler(Sampler[list[int]]):
+    """Batch sampler for RNN-T length-aware training.
+
+    ``sort_lattice`` is deterministic and useful for reproducible speed checks.
+    ``bucket_lattice`` is the training default candidate: sort by lattice size,
+    split into buckets, then shuffle buckets and examples each epoch.
+    """
+
+    def __init__(
+        self,
+        dataset,
+        batch_size: int,
+        order: str,
+        seed: int,
+        bucket_size: int | None = None,
+    ) -> None:
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        if order not in {"sort_lattice", "bucket_lattice"}:
+            raise ValueError("order must be sort_lattice or bucket_lattice")
+        self.batch_size = batch_size
+        self.order = order
+        self.seed = seed
+        self.bucket_size = bucket_size or batch_size * 50
+        self.epoch = 0
+        self.sorted_indexes = sorted(
+            range(len(dataset)),
+            key=lambda index: rnnt_lattice_size(dataset[index]),
+        )
+
+    def __iter__(self):
+        if self.order == "sort_lattice":
+            ordered = list(self.sorted_indexes)
+        else:
+            rng = random.Random(self.seed + self.epoch)
+            buckets = [
+                list(self.sorted_indexes[start : start + self.bucket_size])
+                for start in range(0, len(self.sorted_indexes), self.bucket_size)
+            ]
+            rng.shuffle(buckets)
+            ordered = []
+            for bucket in buckets:
+                rng.shuffle(bucket)
+                ordered.extend(bucket)
+            self.epoch += 1
+
+        for start in range(0, len(ordered), self.batch_size):
+            yield ordered[start : start + self.batch_size]
+
+    def __len__(self) -> int:
+        return (len(self.sorted_indexes) + self.batch_size - 1) // self.batch_size
+
+
+def build_rnnt_train_loader(
+    dataset,
+    collate,
+    batch_size: int,
+    batch_order: str,
+    seed: int,
+    bucket_size: int | None,
+) -> DataLoader:
+    if batch_order == "random":
+        return build_loader(dataset, collate, batch_size, shuffle=True)
+    return DataLoader(
+        dataset,
+        batch_sampler=RnntBatchSampler(
+            dataset,
+            batch_size=batch_size,
+            order=batch_order,
+            seed=seed,
+            bucket_size=bucket_size,
+        ),
+        collate_fn=collate,
     )
 
 
@@ -236,11 +335,23 @@ def main() -> None:
         valid_dataset = explicit_valid_dataset
 
     collate = lambda examples: collate_transducer_batch(examples, vocabs)
-    train_loader = build_loader(train_dataset, collate, args.batch_size, shuffle=True)
+    train_loader = build_rnnt_train_loader(
+        train_dataset,
+        collate,
+        batch_size=args.batch_size,
+        batch_order=args.batch_order,
+        seed=args.seed,
+        bucket_size=args.bucket_size,
+    )
     valid_loader = (
         build_loader(valid_dataset, collate, args.batch_size, shuffle=False)
         if len(valid_dataset) > 0
         else None
+    )
+    print(
+        f"train_batch_order={args.batch_order} "
+        f"bucket_size={args.bucket_size or args.batch_size * 50}",
+        flush=True,
     )
 
     config = TrainConfig(
@@ -281,6 +392,8 @@ def main() -> None:
         output_vocab_size=args.output_vocab_size,
         output_min_token_frequency=args.output_min_token_frequency,
         max_len=args.max_len,
+        batch_order=args.batch_order,
+        bucket_size=args.bucket_size,
         amp=args.amp,
     )
     model = KairoTransducer(
