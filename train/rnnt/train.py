@@ -73,6 +73,7 @@ class TrainConfig:
     max_len: int | None
     batch_order: str
     bucket_size: int | None
+    max_batch_lattice_cells: int | None
     amp: bool
 
 
@@ -131,6 +132,15 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Examples per length bucket for --batch-order bucket_lattice (default: batch_size * 50).",
+    )
+    parser.add_argument(
+        "--max-batch-lattice-cells",
+        type=int,
+        default=None,
+        help=(
+            "Use dynamic batches whose padded RNN-T lattice cells stay under this "
+            "limit: batch * max_input_len * (max_target_len + 1)."
+        ),
     )
     return parser.parse_args()
 
@@ -204,6 +214,7 @@ class RnntBatchSampler(Sampler[list[int]]):
         order: str,
         seed: int,
         bucket_size: int | None = None,
+        max_batch_lattice_cells: int | None = None,
     ) -> None:
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
@@ -213,7 +224,10 @@ class RnntBatchSampler(Sampler[list[int]]):
         self.order = order
         self.seed = seed
         self.bucket_size = bucket_size or batch_size * 50
+        self.max_batch_lattice_cells = max_batch_lattice_cells
         self.epoch = 0
+        self.input_lengths = [len(dataset[index].input_ids) for index in range(len(dataset))]
+        self.target_lengths = [len(dataset[index].target_ids) for index in range(len(dataset))]
         self.sorted_indexes = sorted(
             range(len(dataset)),
             key=lambda index: rnnt_lattice_size(dataset[index]),
@@ -235,11 +249,42 @@ class RnntBatchSampler(Sampler[list[int]]):
                 ordered.extend(bucket)
             self.epoch += 1
 
-        for start in range(0, len(ordered), self.batch_size):
-            yield ordered[start : start + self.batch_size]
+        yield from self._build_batches(ordered)
 
     def __len__(self) -> int:
+        if self.max_batch_lattice_cells is not None:
+            return len(list(self._build_batches(list(self.sorted_indexes))))
         return (len(self.sorted_indexes) + self.batch_size - 1) // self.batch_size
+
+    def _padded_lattice_cells(self, batch: list[int]) -> int:
+        if not batch:
+            return 0
+        max_input = max(self.input_lengths[index] for index in batch)
+        max_target = max(self.target_lengths[index] for index in batch)
+        return len(batch) * max_input * (max_target + 1)
+
+    def _build_batches(self, ordered: list[int]):
+        if self.max_batch_lattice_cells is None:
+            for start in range(0, len(ordered), self.batch_size):
+                yield ordered[start : start + self.batch_size]
+            return
+
+        batch: list[int] = []
+        for index in ordered:
+            candidate = batch + [index]
+            if (
+                batch
+                and (
+                    len(candidate) > self.batch_size
+                    or self._padded_lattice_cells(candidate) > self.max_batch_lattice_cells
+                )
+            ):
+                yield batch
+                batch = [index]
+            else:
+                batch = candidate
+        if batch:
+            yield batch
 
 
 def build_rnnt_train_loader(
@@ -249,6 +294,7 @@ def build_rnnt_train_loader(
     batch_order: str,
     seed: int,
     bucket_size: int | None,
+    max_batch_lattice_cells: int | None,
 ) -> DataLoader:
     if batch_order == "random":
         return build_loader(dataset, collate, batch_size, shuffle=True)
@@ -260,6 +306,7 @@ def build_rnnt_train_loader(
             order=batch_order,
             seed=seed,
             bucket_size=bucket_size,
+            max_batch_lattice_cells=max_batch_lattice_cells,
         ),
         collate_fn=collate,
     )
@@ -342,6 +389,7 @@ def main() -> None:
         batch_order=args.batch_order,
         seed=args.seed,
         bucket_size=args.bucket_size,
+        max_batch_lattice_cells=args.max_batch_lattice_cells,
     )
     valid_loader = (
         build_loader(valid_dataset, collate, args.batch_size, shuffle=False)
@@ -350,7 +398,8 @@ def main() -> None:
     )
     print(
         f"train_batch_order={args.batch_order} "
-        f"bucket_size={args.bucket_size or args.batch_size * 50}",
+        f"bucket_size={args.bucket_size or args.batch_size * 50} "
+        f"max_batch_lattice_cells={args.max_batch_lattice_cells}",
         flush=True,
     )
 
@@ -394,6 +443,7 @@ def main() -> None:
         max_len=args.max_len,
         batch_order=args.batch_order,
         bucket_size=args.bucket_size,
+        max_batch_lattice_cells=args.max_batch_lattice_cells,
         amp=args.amp,
     )
     model = KairoTransducer(

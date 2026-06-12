@@ -160,6 +160,29 @@ class TrainEntrypointTest(unittest.TestCase):
         self.assertEqual(sorted(index for batch in first for index in batch), list(range(12)))
         self.assertEqual(sorted(index for batch in second for index in batch), list(range(12)))
 
+    def test_rnnt_batch_sampler_limits_padded_lattice_cells(self):
+        dataset = [
+            DummyRnntExample([1] * 2, [2] * 2),
+            DummyRnntExample([1] * 2, [2] * 2),
+            DummyRnntExample([1] * 10, [2] * 4),
+            DummyRnntExample([1] * 10, [2] * 4),
+        ]
+        sampler = RnntBatchSampler(
+            dataset,
+            batch_size=4,
+            order="sort_lattice",
+            seed=0,
+            max_batch_lattice_cells=60,
+        )
+
+        batches = list(sampler)
+
+        self.assertEqual(batches, [[0, 1], [2], [3]])
+        for batch in batches:
+            max_input = max(len(dataset[index].input_ids) for index in batch)
+            max_target = max(len(dataset[index].target_ids) for index in batch)
+            self.assertLessEqual(len(batch) * max_input * (max_target + 1), 60)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -191,6 +191,8 @@ python -m train.rnnt.train \
   --device cuda \
   --amp \
   --batch-order bucket_lattice \
+  --max-batch-lattice-cells 160000 \
+  --max-len 96 \
   --encoder-type transformer \
   --prediction-type transformer \
   --input-embed-dim 96 \
