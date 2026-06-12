@@ -26,6 +26,7 @@ from train.common.engine import build_loader
 from train.common.engine import select_device
 from train.rnnt.data import collate_transducer_batch
 from train.rnnt.data import encode_records
+from train.rnnt.data import JsonlTransducerDataset
 from train.common.data import TrainingVocabs
 from train.common.data import load_jsonl_examples
 from train.rnnt.loss import compute_rnnt_loss
@@ -67,6 +68,25 @@ class DecodeBenchmark:
     input_chars_per_sec: float
 
 
+@dataclass(frozen=True)
+class ValueSummary:
+    count: int
+    mean: float
+    p50: float
+    p95: float
+    p99: float
+    min: int
+    max: int
+
+
+@dataclass(frozen=True)
+class DatasetSummary:
+    examples: int
+    input_len: ValueSummary
+    target_len: ValueSummary
+    lattice_cells: ValueSummary
+
+
 def percentile(values: list[float], pct: float) -> float:
     if not values:
         raise ValueError("values must not be empty")
@@ -80,6 +100,21 @@ def percentile(values: list[float], pct: float) -> float:
         return ordered[lower]
     weight = rank - lower
     return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+
+def summarize_values(values: list[int]) -> ValueSummary:
+    if not values:
+        raise ValueError("values must not be empty")
+    float_values = [float(value) for value in values]
+    return ValueSummary(
+        count=len(values),
+        mean=sum(values) / len(values),
+        p50=percentile(float_values, 50),
+        p95=percentile(float_values, 95),
+        p99=percentile(float_values, 99),
+        min=min(values),
+        max=max(values),
+    )
 
 
 def summarize_seconds(times: list[float]) -> TimingSummary:
@@ -102,11 +137,89 @@ def synchronize(device: torch.device) -> None:
         torch.cuda.synchronize(device)
 
 
-def load_dataset(path: Path, vocabs: TrainingVocabs, limit: int | None):
+def example_lattice_cells(example) -> int:
+    return len(example.input_ids) * (len(example.target_ids) + 1)
+
+
+def summarize_dataset(dataset) -> DatasetSummary:
+    return DatasetSummary(
+        examples=len(dataset),
+        input_len=summarize_values([len(example.input_ids) for example in dataset.examples]),
+        target_len=summarize_values([len(example.target_ids) for example in dataset.examples]),
+        lattice_cells=summarize_values(
+            [example_lattice_cells(example) for example in dataset.examples]
+        ),
+    )
+
+
+def filter_dataset(
+    dataset,
+    *,
+    max_input_len: int | None,
+    max_target_len: int | None,
+    max_lattice_cells: int | None,
+) -> JsonlTransducerDataset:
+    examples = []
+    for example in dataset.examples:
+        if max_input_len is not None and len(example.input_ids) > max_input_len:
+            continue
+        if max_target_len is not None and len(example.target_ids) > max_target_len:
+            continue
+        if max_lattice_cells is not None and example_lattice_cells(example) > max_lattice_cells:
+            continue
+        examples.append(example)
+    return JsonlTransducerDataset(examples)
+
+
+def load_dataset(
+    path: Path,
+    vocabs: TrainingVocabs,
+    limit: int | None,
+    *,
+    max_input_len: int | None,
+    max_target_len: int | None,
+    max_lattice_cells: int | None,
+    sort_by_lattice: bool,
+):
     records = load_jsonl_examples(path)
+    dataset = encode_records(records, vocabs)
+    dataset = filter_dataset(
+        dataset,
+        max_input_len=max_input_len,
+        max_target_len=max_target_len,
+        max_lattice_cells=max_lattice_cells,
+    )
+    if sort_by_lattice:
+        dataset = JsonlTransducerDataset(
+            sorted(dataset.examples, key=example_lattice_cells)
+        )
     if limit is not None:
-        records = records[:limit]
-    return encode_records(records, vocabs)
+        dataset = JsonlTransducerDataset(dataset.examples[:limit])
+    if len(dataset) == 0:
+        raise ValueError("dataset is empty after applying benchmark filters")
+    return dataset
+
+
+def batch_stats(batch: dict[str, torch.Tensor]) -> dict[str, int]:
+    input_lengths = batch["input_lengths"].to("cpu", non_blocking=False)
+    target_lengths = batch["target_lengths"].to("cpu", non_blocking=False)
+    batch_size = int(input_lengths.numel())
+    max_input_len = int(input_lengths.max().item())
+    max_target_len = int(target_lengths.max().item())
+    return {
+        "batch_size": batch_size,
+        "max_input_len": max_input_len,
+        "max_target_len": max_target_len,
+        "padded_lattice_cells": batch_size * max_input_len * (max_target_len + 1),
+        "actual_lattice_cells": int((input_lengths * (target_lengths + 1)).sum().item()),
+    }
+
+
+def is_cuda_oom(error: BaseException) -> bool:
+    message = str(error).lower()
+    return "cuda out of memory" in message or (
+        "out of memory" in message and "cuda" in message
+    )
 
 
 def benchmark_train_steps(
@@ -141,16 +254,28 @@ def benchmark_train_steps(
     for index, batch in enumerate(loader):
         if index >= warmup_batches + max_batches:
             break
+        stats = batch_stats(batch)
         batch = move_batch_to_device(batch, device)
         optimizer.zero_grad(set_to_none=True)
         synchronize(device)
         started = time.perf_counter()
-        with torch.amp.autocast("cuda", enabled=amp and device.type == "cuda"):
-            loss = compute_rnnt_loss(model, batch, vocabs.blank_id)
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
-        synchronize(device)
+        try:
+            with torch.amp.autocast("cuda", enabled=amp and device.type == "cuda"):
+                loss = compute_rnnt_loss(model, batch, vocabs.blank_id)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            synchronize(device)
+        except RuntimeError as error:
+            if device.type == "cuda" and is_cuda_oom(error):
+                torch.cuda.empty_cache()
+                detail = " ".join(f"{key}={value}" for key, value in stats.items())
+                raise RuntimeError(
+                    f"CUDA OOM in train batch {index}: {detail}. "
+                    "Try --batch-size 4, --amp, --sort-by-lattice, "
+                    "--max-lattice-cells, or --skip-train for decode-only latency."
+                ) from error
+            raise
         elapsed = time.perf_counter() - started
 
         if index < warmup_batches:
@@ -313,6 +438,17 @@ def print_decode_result(result: DecodeBenchmark) -> None:
     )
 
 
+def print_dataset_summary(summary: DatasetSummary) -> None:
+    print("dataset")
+    print(f"  examples={summary.examples}")
+    for name in ("input_len", "target_len", "lattice_cells"):
+        value = getattr(summary, name)
+        print(
+            f"  {name} mean={value.mean:.1f} p50={value.p50:.0f} "
+            f"p95={value.p95:.0f} p99={value.p99:.0f} max={value.max}"
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact-dir", type=Path, required=True)
@@ -321,6 +457,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--limit-examples", type=int, default=512)
+    parser.add_argument("--max-input-len", type=int, default=None)
+    parser.add_argument("--max-target-len", type=int, default=None)
+    parser.add_argument(
+        "--max-lattice-cells",
+        type=int,
+        default=None,
+        help="Drop examples where input_len * (target_len + 1) exceeds this value.",
+    )
+    parser.add_argument(
+        "--sort-by-lattice",
+        action="store_true",
+        help="Sort examples by RNN-T lattice size before batching to reduce padding spikes.",
+    )
     parser.add_argument("--train-batches", type=int, default=50)
     parser.add_argument("--train-warmup-batches", type=int, default=5)
     parser.add_argument("--decode-samples", type=int, default=100)
@@ -346,6 +495,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prefix-min-chars", type=int, default=1)
     parser.add_argument("--amp", action="store_true", help="Use CUDA AMP for train steps.")
     parser.add_argument("--skip-train", action="store_true")
+    parser.add_argument(
+        "--continue-on-oom",
+        action="store_true",
+        help="If train-step benchmark hits CUDA OOM, record it and continue to decode benchmarks.",
+    )
     parser.add_argument("--json-output", type=Path, default=None)
     return parser.parse_args()
 
@@ -358,7 +512,16 @@ def main() -> None:
     )
     model.to(device)
     vocabs = TrainingVocabs(input_vocab=input_vocab, output_vocab=output_vocab)
-    dataset = load_dataset(args.data, vocabs, args.limit_examples)
+    dataset = load_dataset(
+        args.data,
+        vocabs,
+        args.limit_examples,
+        max_input_len=args.max_input_len,
+        max_target_len=args.max_target_len,
+        max_lattice_cells=args.max_lattice_cells,
+        sort_by_lattice=args.sort_by_lattice,
+    )
+    dataset_summary = summarize_dataset(dataset)
     results: dict[str, object] = {
         "artifact_dir": str(args.artifact_dir),
         "checkpoint": str(args.checkpoint) if args.checkpoint else None,
@@ -368,6 +531,7 @@ def main() -> None:
         "limit_examples": args.limit_examples,
         "input_vocab_size": len(input_vocab.id_to_token),
         "output_vocab_size": len(output_vocab.id_to_token),
+        "dataset": asdict(dataset_summary),
     }
 
     print(
@@ -375,23 +539,32 @@ def main() -> None:
         f"device={device} examples={len(dataset)}",
         flush=True,
     )
+    print_dataset_summary(dataset_summary)
 
     if device.type == "mps" and not args.skip_train:
         raise ValueError("RNN-T loss supports CPU/CUDA here; use --device cpu or --skip-train")
 
     if not args.skip_train:
-        train_result = benchmark_train_steps(
-            model=model,
-            vocabs=vocabs,
-            dataset=dataset,
-            device=device,
-            batch_size=args.batch_size,
-            warmup_batches=args.train_warmup_batches,
-            max_batches=args.train_batches,
-            amp=args.amp,
-        )
-        print_train_result(train_result)
-        results["train_step"] = asdict(train_result)
+        try:
+            train_result = benchmark_train_steps(
+                model=model,
+                vocabs=vocabs,
+                dataset=dataset,
+                device=device,
+                batch_size=args.batch_size,
+                warmup_batches=args.train_warmup_batches,
+                max_batches=args.train_batches,
+                amp=args.amp,
+            )
+            print_train_result(train_result)
+            results["train_step"] = asdict(train_result)
+        except RuntimeError as error:
+            if not args.continue_on_oom or not is_cuda_oom(error):
+                raise
+            print(f"train_step_error={error}", flush=True)
+            results["train_step_error"] = str(error)
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
 
     if args.decode != "none":
         decode_modes = ["greedy", "beam"] if args.decode == "both" else [args.decode]

@@ -4,8 +4,12 @@ from dataclasses import dataclass
 import torch
 
 from bench.rnnt import benchmark_prefix_decode
+from bench.rnnt import filter_dataset
 from bench.rnnt import summarize_seconds
+from bench.rnnt import summarize_dataset
 from bench.rnnt import percentile
+from train.rnnt.data import EncodedExample
+from train.rnnt.data import JsonlTransducerDataset
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,39 @@ class RnntBenchmarkTest(unittest.TestCase):
         self.assertEqual(result.decoder, "greedy_prefix")
         self.assertEqual(result.samples, 3)
         self.assertEqual(result.input_chars, 8)
+
+    def test_dataset_filter_uses_lattice_cells(self):
+        dataset = JsonlTransducerDataset(
+            [
+                EncodedExample([1, 2], [3], "ab", "x"),
+                EncodedExample([1, 2, 3, 4], [5, 6, 7], "abcd", "xyz"),
+            ]
+        )
+
+        filtered = filter_dataset(
+            dataset,
+            max_input_len=None,
+            max_target_len=None,
+            max_lattice_cells=5,
+        )
+
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered.examples[0].input_text, "ab")
+
+    def test_dataset_summary_reports_lengths(self):
+        dataset = JsonlTransducerDataset(
+            [
+                EncodedExample([1, 2], [3], "ab", "x"),
+                EncodedExample([1, 2, 3, 4], [5, 6], "abcd", "xy"),
+            ]
+        )
+
+        summary = summarize_dataset(dataset)
+
+        self.assertEqual(summary.examples, 2)
+        self.assertEqual(summary.input_len.max, 4)
+        self.assertEqual(summary.target_len.max, 2)
+        self.assertEqual(summary.lattice_cells.max, 12)
 
 
 if __name__ == "__main__":
