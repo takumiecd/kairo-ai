@@ -29,17 +29,24 @@ from decode.greedy import load_model_from_artifact
 from eval.metrics import cer_result
 
 
-def load_records(path: Path, limit: int | None) -> list[dict]:
+def load_records(path: Path, limit: int | None, max_len: int | None) -> tuple[list[dict], int]:
     records: list[dict] = []
+    skipped = 0
     with path.open("r", encoding="utf-8") as file:
         for line in file:
             line = line.strip()
             if not line:
                 continue
-            records.append(json.loads(line))
+            record = json.loads(line)
+            if max_len is not None and (
+                len(record["input"]) > max_len or len(record["target"]) > max_len
+            ):
+                skipped += 1
+                continue
+            records.append(record)
             if limit is not None and len(records) >= limit:
                 break
-    return records
+    return records, skipped
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,6 +60,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--data", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--max-len",
+        type=int,
+        default=None,
+        help="Skip records whose input or target string exceeds this length.",
+    )
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--max-symbols-per-step", type=int, default=4)
     parser.add_argument("--max-output-length", type=int, default=128)
@@ -70,8 +83,12 @@ def main() -> None:
     model.to(torch.device(args.device))
     model.eval()
 
-    records = load_records(args.data, args.limit)
-    print(f"Evaluating {len(records)} examples from {args.data}", flush=True)
+    records, skipped = load_records(args.data, args.limit, args.max_len)
+    print(
+        f"Evaluating {len(records)} examples from {args.data} "
+        f"(skipped_long={skipped})",
+        flush=True,
+    )
 
     total_edits = 0
     total_reference = 0
