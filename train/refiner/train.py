@@ -302,7 +302,7 @@ def main() -> None:
         start_epoch=start_epoch,
         valid_loss_fn=(
             (
-                lambda: evaluate_average_refine_loss(
+                lambda _epoch: evaluate_average_refine_loss(
                     model,
                     valid_loader,
                     device=device,

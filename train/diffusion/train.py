@@ -292,7 +292,7 @@ def main() -> None:
         ),
         valid_loss_fn=(
             (
-                lambda: evaluate_average_diffusion_loss(
+                lambda _epoch: evaluate_average_diffusion_loss(
                     model, valid_loader, device, args.length_loss_weight
                 )
             )

@@ -67,6 +67,8 @@ class TrainConfig:
     valid_cer_every: int
     valid_beam_width: int
     valid_expansion_width: int
+    valid_loss_samples: int | None
+    valid_loss_every: int
     output_tokenizer: str
     output_vocab_size: int
     output_min_token_frequency: int
@@ -141,6 +143,18 @@ def parse_args() -> argparse.Namespace:
             "Use dynamic batches whose padded RNN-T lattice cells stay under this "
             "limit: batch * max_input_len * (max_target_len + 1)."
         ),
+    )
+    parser.add_argument(
+        "--valid-loss-samples",
+        type=int,
+        default=None,
+        help="Evaluate validation loss on only the first N validation examples.",
+    )
+    parser.add_argument(
+        "--valid-loss-every",
+        type=int,
+        default=1,
+        help="Evaluate validation loss every N epochs. Skipped epochs log null and do not update best.pt.",
     )
     return parser.parse_args()
 
@@ -423,7 +437,14 @@ def main() -> None:
     )
     valid_loader = (
         build_rnnt_eval_loader(
-            valid_dataset,
+            (
+                Subset(
+                    valid_dataset,
+                    range(min(args.valid_loss_samples, len(valid_dataset))),
+                )
+                if args.valid_loss_samples is not None
+                else valid_dataset
+            ),
             collate,
             batch_size=args.batch_size,
             max_batch_lattice_cells=args.max_batch_lattice_cells,
@@ -472,6 +493,8 @@ def main() -> None:
         valid_cer_every=args.valid_cer_every,
         valid_beam_width=args.valid_beam_width,
         valid_expansion_width=args.valid_expansion_width,
+        valid_loss_samples=args.valid_loss_samples,
+        valid_loss_every=args.valid_loss_every,
         output_tokenizer=args.output_tokenizer,
         output_vocab_size=args.output_vocab_size,
         output_min_token_frequency=args.output_min_token_frequency,
@@ -553,12 +576,16 @@ def main() -> None:
         start_epoch=start_epoch,
         valid_loss_fn=(
             (
-                lambda: evaluate_average_loss(
-                    model,
-                    valid_loader,
-                    vocabs.blank_id,
-                    device,
-                    amp=args.amp,
+                lambda epoch: (
+                    evaluate_average_loss(
+                        model,
+                        valid_loader,
+                        vocabs.blank_id,
+                        device,
+                        amp=args.amp,
+                    )
+                    if args.valid_loss_every > 0 and epoch % args.valid_loss_every == 0
+                    else None
                 )
             )
             if valid_loader is not None

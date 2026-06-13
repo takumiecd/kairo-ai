@@ -210,7 +210,7 @@ def main() -> None:
         start_epoch=start_epoch,
         valid_loss_fn=(
             (
-                lambda: evaluate_average_edit_loss(
+                lambda _epoch: evaluate_average_edit_loss(
                     model, valid_loader, device=device, insert_loss_weight=args.insert_loss_weight
                 )
             )

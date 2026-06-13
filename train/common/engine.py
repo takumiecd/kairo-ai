@@ -199,6 +199,7 @@ def plot_metrics(output_dir: Path) -> None:
         epochs = []
         train_losses = []
         valid_losses = []
+        valid_loss_epochs = []
         valid_cers = []
         cer_epochs = []
 
@@ -208,14 +209,17 @@ def plot_metrics(output_dir: Path) -> None:
                     data = json.loads(line)
                     epochs.append(data["epoch"])
                     train_losses.append(data["train_loss"])
-                    valid_losses.append(data["valid_loss"])
+                    if data.get("valid_loss") is not None:
+                        valid_loss_epochs.append(data["epoch"])
+                        valid_losses.append(data["valid_loss"])
                     if "valid_cer" in data and data["valid_cer"] is not None:
                         valid_cers.append(data["valid_cer"])
                         cer_epochs.append(data["epoch"])
 
         plt.figure(figsize=(10, 6))
         plt.plot(epochs, train_losses, label="Train Loss", marker="o", color="blue")
-        plt.plot(epochs, valid_losses, label="Validation Loss", marker="x", color="red")
+        if valid_losses:
+            plt.plot(valid_loss_epochs, valid_losses, label="Validation Loss", marker="x", color="red")
         plt.title("Loss Curves")
         plt.xlabel("Epoch")
         plt.ylabel("Loss")
@@ -247,7 +251,7 @@ def plot_metrics(output_dir: Path) -> None:
 # Trainer
 # ----------------------------------------------------------------------
 LossFn = Callable[[object, dict], torch.Tensor]
-ValidLossFn = Callable[[], float]
+ValidLossFn = Callable[[int], "float | None"]
 CerFn = Callable[[int], "float | None"]
 
 
@@ -374,14 +378,14 @@ class Trainer:
         self,
         epoch: int,
         train_loss: float,
-        valid_loss: float,
+        valid_loss: "float | None",
         valid_cer: "float | None",
         best_valid_loss: float,
     ) -> float:
         metrics = [
             f"epoch={epoch}",
             f"train_loss={train_loss:.4f}",
-            f"valid_loss={valid_loss:.4f}",
+            f"valid_loss={valid_loss:.4f}" if valid_loss is not None else "valid_loss=skipped",
         ]
         if valid_cer is not None:
             metrics.append(f"valid_cer={valid_cer:.4f}")
@@ -397,7 +401,7 @@ class Trainer:
             self.config,
             self.scheduler,
         )
-        if valid_loss < best_valid_loss:
+        if valid_loss is not None and valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
             save_checkpoint(
                 self.output_dir / "checkpoints" / "best.pt",
@@ -437,7 +441,7 @@ class Trainer:
             train_loss = self._train_one_epoch(
                 train_loader, loss_fn, gradient_clip, epoch, epochs
             )
-            valid_loss = valid_loss_fn() if valid_loss_fn is not None else train_loss
+            valid_loss = valid_loss_fn(epoch) if valid_loss_fn is not None else None
             valid_cer = cer_fn(epoch) if cer_fn is not None else None
             best_valid_loss = self._checkpoint_and_log(
                 epoch, train_loss, valid_loss, valid_cer, best_valid_loss

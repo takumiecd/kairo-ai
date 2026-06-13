@@ -48,7 +48,7 @@ def save_checkpoint(
     optimizer,
     epoch: int,
     train_loss: float,
-    valid_loss: float,
+    valid_loss: float | None,
     config,
     scheduler=None,
 ) -> None:
