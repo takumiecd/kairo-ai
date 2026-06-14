@@ -1,7 +1,7 @@
 import unittest
 
 from dataset.generate import DatasetGenerator
-from dataset.reading import split_mixed_text
+from dataset.reading import JapaneseRomajiConverter, split_mixed_text
 
 
 class DatasetGenerationTest(unittest.TestCase):
@@ -65,6 +65,24 @@ class DatasetGenerationTest(unittest.TestCase):
         )
 
         self.assertTrue(all(example.input.startswith("tokenizer ") for example in examples))
+
+    def test_long_vowel_mark_becomes_dash_key(self):
+        # IME users type the long vowel ー with the '-' key (ループ -> ru-pu),
+        # not as a doubled vowel (ruupu). The dataset must match real input.
+        converter = JapaneseRomajiConverter()
+
+        self.assertEqual(converter.convert_text("ループ"), "ru-pu")
+        self.assertEqual(converter.convert_text("サーバーエラー"), "sa-ba-era-")
+        self.assertNotIn("uu", converter.convert_text("ループ"))
+
+    def test_wapuro_romaji_for_du_di_and_middle_dot(self):
+        # pykakasi's Hepburn (zu/ji) collides with ず/じ; IME types du/di for
+        # づ/ぢ. The middle dot ・ is typed with the '/' key, not left full-width.
+        converter = JapaneseRomajiConverter()
+
+        self.assertEqual(converter.convert_text("続く"), "tsuduku")
+        self.assertEqual(converter.convert_text("データ・ベース"), "de-ta/be-su")
+        self.assertNotIn("・", converter.convert_text("データ・ベース"))
 
     def test_splits_mixed_text(self):
         spans = split_mixed_text('git commit -m "修正した"')

@@ -180,6 +180,23 @@ git commit -m "baguwosyuuseishita"
 git commit -m "baguwohsuuseishita"
 ```
 
+## Romaji Conversion (wāpuro-rōmaji)
+
+Japanese spans are romanized to match the keys a typist actually presses in an
+IME (wāpuro-rōmaji), not a transliteration scheme. pykakasi emits Hepburn, which
+diverges for a few kana, so the generator splices in the IME spelling around
+pykakasi-converted runs (see `SPECIAL_KANA_INPUT` in `dataset/reading.py`):
+
+- long vowel `ー` → the `-` key, not a doubled vowel (`ループ` → `ru-pu`, not
+  `ruupu`; `サーバー` → `sa-ba-`)
+- `づ` / `ヅ` → `du` (Hepburn `zu` would type ず); `続く` → `tsuduku`
+- `ぢ` / `ヂ` → `di` (Hepburn `ji` would type じ)
+- middle dot `・` → the `/` key (`データ・ベース` → `de-ta/be-su`)
+
+pykakasi already matches IME input for `ん` (`shinbun`, `sanpo`, `gunma`), the
+sokuon `っ` (`matcha`), and `di`/`va`/`fa` (`ディレクトリ` → `direkutori`), so
+those need no special handling.
+
 ## Literal Noise
 
 Kairo should tolerate typos in both Japanese romaji and English. The generator

@@ -10,6 +10,24 @@ from sudachipy import dictionary
 from sudachipy import tokenizer
 
 
+# Kana whose IME (wāpuro-rōmaji) input differs from pykakasi's Hepburn output.
+# pykakasi targets a transliteration scheme, not the keys a typist presses:
+#   ー (long vowel) -> Hepburn doubles the vowel (ループ "ruupu"), but IME types
+#                      the '-' key (ループ "ru-pu").
+#   ヅ/づ           -> Hepburn "zu" collides with ず; IME types "du".
+#   ヂ/ぢ           -> Hepburn "ji" collides with じ; IME types "di".
+#   ・ (middle dot) -> left as a full-width char; IME types the '/' key.
+# We splice these in around pykakasi-converted runs of ordinary kana.
+SPECIAL_KANA_INPUT = {
+    "ー": "-",
+    "ヅ": "du",
+    "づ": "du",
+    "ヂ": "di",
+    "ぢ": "di",
+    "・": "/",
+}
+
+
 INPUT_PUNCTUATION = {
     "、": ",",
     "。": ".",
@@ -110,9 +128,31 @@ class JapaneseRomajiConverter:
         for token in self.tokenizer_obj.tokenize(text, self.mode):
             reading = token.reading_form()
             target_text = reading if reading and reading != "*" else token.surface()
-            for item in self.kks.convert(target_text):
-                romaji_parts.append(item["hepburn"])
+            romaji_parts.append(self._convert_reading(target_text))
         return "".join(romaji_parts)
+
+    def _convert_reading(self, target_text: str) -> str:
+        """Convert a kana reading to IME-style (wāpuro-rōmaji) input.
+
+        pykakasi emits Hepburn, which diverges from the keys a typist presses
+        for a handful of kana (see ``SPECIAL_KANA_INPUT``). We convert runs of
+        ordinary kana with pykakasi and splice in the IME spelling for each
+        special kana, so the dataset matches what users actually type.
+        """
+        parts: list[str] = []
+        run: list[str] = []
+        for char in target_text:
+            if char in SPECIAL_KANA_INPUT:
+                parts.append(self._hepburn("".join(run)))
+                run.clear()
+                parts.append(SPECIAL_KANA_INPUT[char])
+            else:
+                run.append(char)
+        parts.append(self._hepburn("".join(run)))
+        return "".join(parts)
+
+    def _hepburn(self, text: str) -> str:
+        return "".join(item["hepburn"] for item in self.kks.convert(text))
 
 
 def normalize_literal_span(text: str) -> str:
