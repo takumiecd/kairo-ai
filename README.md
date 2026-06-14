@@ -274,6 +274,38 @@ python -m decode.beam \
   --beam-width 5
 ```
 
+## 🪄 個人化（LoRA）
+
+ユーザーが IME で確定した変換（`kairo` リポジトリが書き出す `~/.config/kairo/feedback.jsonl`、
+スキーマは [docs/FEEDBACK_SCHEMA.md](docs/FEEDBACK_SCHEMA.md)）を教師に、**凍結したベース
+モデル**へ小さな LoRA アダプタだけを学習させて個人最適化します。サーバ不要・ローカル完結です。
+
+```bash
+# 1. feedback.jsonl を学習レコード({input, target})へ
+python -m dataset.source_feedback \
+  --input ~/.config/kairo/feedback.jsonl \
+  --output data/feedback/records.jsonl \
+  --min-count 1 --repeat-corrections 3
+
+# 2. ベース artifact から LoRA 微調整（joint network に適用、ベースは凍結）
+python -m train.rnnt.lora \
+  --base-artifact-dir artifacts/rnnt-trf-v2 \
+  --data data/feedback/records.jsonl \
+  --output-dir artifacts/rnnt-trf-v2-me \
+  --epochs 3 --batch-size 16 --learning-rate 1e-3 \
+  --lora-rank 8 --lora-alpha 16
+```
+
+出力は2つ:
+
+- `artifacts/rnnt-trf-v2-me/lora_adapter.pt` — 小さな可搬アダプタ（LoRA テンソル＋設定）
+- `artifacts/rnnt-trf-v2-me/personalized/` — LoRA をベース重みに**マージ済み**の完全 artifact。
+  `decode.greedy`/`decode.beam` や IME 推論サーバに `--artifact-dir` で渡せば、アダプタ対応の
+  コード無しでそのまま個人化モデルが動きます（`kairo` 側の `tools/use_model.sh` で切替可）。
+
+`candidate_rank>0`（ユーザーが top-1 以外を選んだ＝補正）の確定は強い信号として
+`--repeat-corrections` 回だけ重み付けされます。
+
 ## 🫧 Discrete Diffusion Experiment
 
 `train.diffusion.train` は、ローマ字入力・任意の前文 context・ノイズ化した
