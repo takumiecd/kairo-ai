@@ -115,3 +115,30 @@ def load_lora_state_dict(model: nn.Module, state_dict: dict[str, torch.Tensor]) 
 
 def count_trainable_parameters(model: nn.Module) -> int:
     return sum(param.numel() for param in model.parameters() if param.requires_grad)
+
+
+def merged_state_dict(model: nn.Module) -> dict[str, torch.Tensor]:
+    """Fold LoRA deltas into the base weights and return a *plain* state dict.
+
+    The result has the key layout of an un-wrapped :class:`KairoTransducer`
+    (``joint_fc1.weight`` rather than ``joint_fc1.base.weight``), so a merged
+    checkpoint loads into the normal model and is served by the existing
+    decoders/IME with no adapter-aware code.
+    """
+    lora_prefixes = {
+        name for name, module in model.named_modules() if isinstance(module, LoRALinear)
+    }
+    full = model.state_dict()
+    merged: dict[str, torch.Tensor] = {}
+    for key, value in full.items():
+        if any(key == prefix or key.startswith(prefix + ".") for prefix in lora_prefixes):
+            continue  # handled below from the LoRALinear module directly
+        merged[key] = value.detach().cpu()
+
+    for prefix in lora_prefixes:
+        module = model.get_submodule(prefix)
+        delta = (module.lora_b @ module.lora_a) * module.scaling
+        merged[f"{prefix}.weight"] = (module.base.weight.detach() + delta.detach()).cpu()
+        if module.base.bias is not None:
+            merged[f"{prefix}.bias"] = module.base.bias.detach().cpu()
+    return merged
