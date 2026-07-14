@@ -7,7 +7,7 @@
 1. **スペースキーは変換に使わない**：スペースキーはただの空白として入力されます（コーディングやコマンド入力に最適化）。
 2. **英語・日本語の混在を文脈で自動判定**：`git commit -m "shuseishita"` は `git commit -m "修正した"` に自動で変換（アンダーライン表示）。
 3. **矢印キーによる候補選択**：AIの推論（トップ候補）が意図と異なる場合のみ、上下矢印キーで裏で計算されている別のビームサーチ候補を選択します。
-4. **学習のループ（Online Learning）**：ユーザーが矢印キーで候補を修正して確定した履歴は、AIにとって最高の正解データになります。定期的にローカルで微調整（LoRA等）を行い、ユーザー専用のIMEに進化します。
+4. **学習のループ（プロファイル）**：ユーザーが矢印キーで候補を修正して確定した履歴は、AIにとって最高の正解データになります。モデル本体は再学習せず、履歴から更新される**外部ユーザープロファイル**を変換時に読ませることで、ユーザー専用のIMEに進化します（[docs/PROFILE.md](docs/PROFILE.md)）。
 
 ## 🧠 モデルの2系統
 変換の出し方が異なる2系統のモデルを用意します。役割で分けるだけで、それぞれの内部アーキテクチャは固定せず、実験しながら選定します。設計方針の詳細は [`docs/MODEL_DESIGN.md`](docs/MODEL_DESIGN.md) を参照してください。
@@ -274,37 +274,23 @@ python -m decode.beam \
   --beam-width 5
 ```
 
-## 🪄 個人化（LoRA）
+## 🪄 個人化（外部ユーザープロファイル）
 
 ユーザーが IME で確定した変換（`kairo` リポジトリが書き出す `~/.config/kairo/feedback.jsonl`、
-スキーマは [docs/FEEDBACK_SCHEMA.md](docs/FEEDBACK_SCHEMA.md)）を教師に、**凍結したベース
-モデル**へ小さな LoRA アダプタだけを学習させて個人最適化します。サーバ不要・ローカル完結です。
+スキーマは [docs/FEEDBACK_SCHEMA.md](docs/FEEDBACK_SCHEMA.md)）から、**外部ユーザープロファイル**
+（明示的シグナル: 修正・登録・却下 / 暗黙的シグナル: 頻度・recency・ドメイン傾向）を構築し、
+変換時にデコーダへ渡して個人最適化します。**モデル本体（θ）は再学習しません。**
+サーバ不要・ローカル完結です。
 
-```bash
-# 1. feedback.jsonl を学習レコード({input, target})へ
-python -m dataset.source_feedback \
-  --input ~/.config/kairo/feedback.jsonl \
-  --output data/feedback/records.jsonl \
-  --min-count 1 --repeat-corrections 3
+- **段階A（実装予定）**: `decode/beam.py` でのスコア融合。プロファイル語彙のトライを使った
+  ポテンシャル差分ボーナス。学習不要・モデル無変更。
+- **段階B（効果検証後）**: プロファイル埋め込みを Prediction Network に注入し、
+  仮想ユーザーストリームで事前学習。
 
-# 2. ベース artifact から LoRA 微調整（joint network に適用、ベースは凍結）
-python -m train.rnnt.lora \
-  --base-artifact-dir artifacts/rnnt-trf-v2 \
-  --data data/feedback/records.jsonl \
-  --output-dir artifacts/rnnt-trf-v2-me \
-  --epochs 3 --batch-size 16 --learning-rate 1e-3 \
-  --lora-rank 8 --lora-alpha 16
-```
+定式化・プロファイルの中身・実装順序は [docs/PROFILE.md](docs/PROFILE.md) を参照。
 
-出力は2つ:
-
-- `artifacts/rnnt-trf-v2-me/lora_adapter.pt` — 小さな可搬アダプタ（LoRA テンソル＋設定）
-- `artifacts/rnnt-trf-v2-me/personalized/` — LoRA をベース重みに**マージ済み**の完全 artifact。
-  `decode.greedy`/`decode.beam` や IME 推論サーバに `--artifact-dir` で渡せば、アダプタ対応の
-  コード無しでそのまま個人化モデルが動きます（`kairo` 側の `tools/use_model.sh` で切替可）。
-
-`candidate_rank>0`（ユーザーが top-1 以外を選んだ＝補正）の確定は強い信号として
-`--repeat-corrections` 回だけ重み付けされます。
+> **旧方針（LoRA ローカル微調整）は廃止しました。** θ を動かすため破滅的忘却・モデル汚染を
+> 持ち込むためです。旧実装（`train.rnnt.lora`、`model/lora.py`）は git 履歴に残っています。
 
 ## 🫧 Discrete Diffusion Experiment
 

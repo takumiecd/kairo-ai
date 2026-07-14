@@ -136,11 +136,15 @@ Goal: make the model usable by Kairo.
 
 ## Phase 5: Personalization
 
-Goal: adapt locally to the user's correction history.
+Goal: adapt to the user's history via an external profile. Model parameters
+stay fixed per user — no local fine-tuning (LoRA-style updates are
+abandoned; see [PROFILE.md](PROFILE.md)).
 
-- Store accepted corrections as local training examples.
-- Convert correction history into fine-tuning data.
-- Explore adapter/LoRA-style local updates.
+- Build the profile builder (feedback.jsonl → profile at runtime; corpus
+  stream → virtual profile at training time; same code for both).
+- Stage A: trie-based score fusion in `decode/beam.py` (no retraining).
+- Stage B (after measuring Stage A): profile-conditioned pretraining with
+  virtual user streams; inject profile embedding into the prediction network.
 - Keep personalization private and local-first.
 
 ## Immediate Implementation Plan
