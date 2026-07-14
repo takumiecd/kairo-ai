@@ -1,0 +1,8 @@
+# Golden profile_bias.tsv used to cross-check kairo-ai's exporter against
+# kairo-core's parser. Kept in sync (byte-for-byte) with:
+#   kairo/crates/kairo-core/tests/fixtures/profile_bias_golden.tsv
+# Produced by tests.test_export_bias.ExportBiasGoldenTest — see that test for
+# the exact Profile that generates these numbers.
+# surface	reading	b_exp	b_imp
+猫	neko	0.000000	2.291759
+関数	kansuu	0.693147	0.000000
