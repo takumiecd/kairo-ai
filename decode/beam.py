@@ -11,8 +11,14 @@ import torch
 from dataset.vocab import CharVocab
 from decode.greedy import infer_model_device
 from decode.greedy import load_model_from_artifact
+from decode.profile_fusion import ProfileFusion
+from decode.profile_fusion import ProfileFusionState
 from decode.scores import Candidate
 from decode.scores import normalize_candidate_confidence
+from user_profile.schema import Profile
+
+
+DEFAULT_PROFILE_FUSION_WEIGHT = 1.0  # docs/PROFILE.md §3 の s(k|t,u) 式の lambda
 
 
 @dataclass(frozen=True)
@@ -20,6 +26,8 @@ class BeamState:
     token_ids: tuple[int, ...]
     prediction_ids: tuple[int, ...]
     score: float
+    # profile=None のとき常に None のまま。従来挙動に一切影響しない。
+    fusion_state: ProfileFusionState | None = None
 
 
 def _top_nonblank_ids(log_probs, blank_id: int, blocked_ids: set[int], k: int):
@@ -53,7 +61,15 @@ def beam_search_decode(
     expansion_width: int = 5,
     max_symbols_per_step: int = 4,
     max_output_length: int = 128,
+    profile: Profile | None = None,
+    profile_fusion_weight: float = DEFAULT_PROFILE_FUSION_WEIGHT,
 ) -> list[Candidate]:
+    """RNN-T ビームサーチ。
+
+    ``profile`` が与えられた場合のみ、docs/PROFILE.md §3 のトライ融合
+    (段階A)を各展開ステップの log prob に加算する。``profile=None``
+    (既定)では従来のプロファイル無しの挙動と完全に一致する。
+    """
     blank_id = output_vocab.token_to_id["<blank>"]
     bos_id = output_vocab.token_to_id["<bos>"]
     blocked_ids = {
@@ -63,7 +79,17 @@ def beam_search_decode(
     }
     device = infer_model_device(model)
     x = torch.tensor([input_ids], dtype=torch.long, device=device)
-    beams = [BeamState(token_ids=(), prediction_ids=(bos_id,), score=0.0)]
+
+    fusion = ProfileFusion.from_profile(profile) if profile is not None else None
+    initial_fusion_state = fusion.initial_state() if fusion is not None else None
+    beams = [
+        BeamState(
+            token_ids=(),
+            prediction_ids=(bos_id,),
+            score=0.0,
+            fusion_state=initial_fusion_state,
+        )
+    ]
 
     for input_step in range(len(input_ids)):
         active = beams
@@ -82,11 +108,13 @@ def beam_search_decode(
                     logits[0, input_step, len(beam.prediction_ids) - 1],
                     dim=-1,
                 )
+                # blank は出力を進めないので、トライ状態も delta も変化なし。
                 advanced.append(
                     BeamState(
                         token_ids=beam.token_ids,
                         prediction_ids=beam.prediction_ids,
                         score=beam.score + float(log_probs[blank_id].item()),
+                        fusion_state=beam.fusion_state,
                     )
                 )
 
@@ -98,11 +126,18 @@ def beam_search_decode(
                     blocked_ids=blocked_ids,
                     k=expansion_width,
                 ):
+                    new_fusion_state = beam.fusion_state
+                    fused_score = beam.score + token_score
+                    if fusion is not None:
+                        char = output_vocab.id_to_token[token_id]
+                        new_fusion_state, delta = fusion.step(beam.fusion_state, char)
+                        fused_score += profile_fusion_weight * delta
                     emitted.append(
                         BeamState(
                             token_ids=beam.token_ids + (token_id,),
                             prediction_ids=beam.prediction_ids + (token_id,),
-                            score=beam.score + token_score,
+                            score=fused_score,
+                            fusion_state=new_fusion_state,
                         )
                     )
 
@@ -133,6 +168,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expansion-width", type=int, default=5)
     parser.add_argument("--max-symbols-per-step", type=int, default=4)
     parser.add_argument("--max-output-length", type=int, default=128)
+    parser.add_argument(
+        "--profile",
+        type=Path,
+        default=None,
+        help="Profile JSON for decoder-side trie fusion (docs/PROFILE.md §3). "
+        "Omit for the profile-free (default) behavior.",
+    )
+    parser.add_argument(
+        "--profile-fusion-weight",
+        type=float,
+        default=DEFAULT_PROFILE_FUSION_WEIGHT,
+        help="Overall lambda weight applied to the trie-fusion potential delta.",
+    )
     return parser.parse_args()
 
 
@@ -142,6 +190,7 @@ def main() -> None:
         args.artifact_dir,
         checkpoint=args.checkpoint,
     )
+    profile = Profile.load_json(args.profile) if args.profile is not None else None
     candidates = beam_search_decode(
         model,
         input_vocab.encode(args.input),
@@ -150,6 +199,8 @@ def main() -> None:
         expansion_width=args.expansion_width,
         max_symbols_per_step=args.max_symbols_per_step,
         max_output_length=args.max_output_length,
+        profile=profile,
+        profile_fusion_weight=args.profile_fusion_weight,
     )
     for candidate in candidates:
         print(f"{candidate.confidence:.4f}\t{candidate.score:.4f}\t{candidate.text}")
