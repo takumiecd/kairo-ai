@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from model.profile_encoder import DEFAULT_TOP_K
+from model.profile_encoder import ProfileEncoder
 from model.transformer_encoder import TransformerSequenceEncoder
 
 class KairoTransducer(nn.Module):
@@ -10,6 +12,12 @@ class KairoTransducer(nn.Module):
     Encoder / Prediction Network はそれぞれ ``"lstm"`` / ``"transformer"`` を
     選べる。Joint Network と損失・デコード経路は共通なので、中身だけ差し替えて
     A/B 比較できる。設計方針は ``docs/MODEL_DESIGN.md`` を参照。
+
+    ``profile_conditioning=True`` (docs/PROFILE.md §4, 段階B) にすると、
+    プロファイル埋め込み e(u) を Prediction Network の入力先頭に
+    プレフィックストークンとして注入する。デフォルトは ``False`` で、
+    既存の重み名・forward の挙動を完全に維持する(``profile_encoder`` 等の
+    追加パラメータも一切登録されない)。
     """
     def __init__(
         self,
@@ -32,6 +40,8 @@ class KairoTransducer(nn.Module):
         max_positions: int = 256,
         input_pad_id: int = 0,
         output_pad_id: int = 0,
+        profile_conditioning: bool = False,
+        profile_top_k: int = DEFAULT_TOP_K,
     ):
         super().__init__()
         input_embed_dim = input_embed_dim or int(embed_dim)
@@ -41,6 +51,7 @@ class KairoTransducer(nn.Module):
         joint_hidden_dim = joint_hidden_dim or int(hidden_dim)
         self.encoder_type = encoder_type
         self.prediction_type = prediction_type
+        self.profile_conditioning = profile_conditioning
 
         # 1. Encoder (Acoustic Modelに相当)
         # ユーザーが打ったローマ字を処理する。入力は確定済みなので双方向(未来を見てよい)。
@@ -84,6 +95,21 @@ class KairoTransducer(nn.Module):
         else:
             raise ValueError(f"unknown prediction_type: {prediction_type!r}")
 
+        # 2.5 プロファイルエンコーダ (docs/PROFILE.md §4, 段階B)
+        # profile_conditioning=False のときは一切構築しない
+        # (既存チェックポイントとの state_dict 互換を壊さないため)。
+        if self.profile_conditioning:
+            self.profile_encoder = ProfileEncoder(
+                embed_dim=output_embed_dim,
+                output_dim=prediction_hidden_dim,
+                top_k=profile_top_k,
+            )
+            if self.prediction_type == "lstm":
+                # LSTM の入力は output_embed_dim 次元。e(u) は
+                # prediction_hidden_dim 次元なので、通常の埋め込みトークンと
+                # 同じ入力空間へ落としてから先頭に連結する。
+                self.profile_lstm_proj = nn.Linear(prediction_hidden_dim, output_embed_dim)
+
         # 3. Joint Network
         # Encoderの特徴量とPrediction Networkの特徴量を結合して最終予測
         self.joint_fc1 = nn.Linear(encoder_hidden_dim + prediction_hidden_dim, joint_hidden_dim)
@@ -96,23 +122,50 @@ class KairoTransducer(nn.Module):
             return enc_out
         return self.encoder_transformer(x)
 
-    def predict(self, y):
-        """y: (B, T_y) → Prediction 特徴 (B, T_y, prediction_hidden_dim)。"""
-        if self.prediction_type == "lstm":
-            pred_out, _ = self.pred_lstm(self.pred_emb(y))
-            return pred_out
-        return self.pred_transformer(y)
+    def predict(self, y, profile_features=None):
+        """y: (B, T_y) → Prediction 特徴 (B, T_y, prediction_hidden_dim)。
 
-    def forward(self, x, y):
+        ``profile_features``: e(u) 本体、shape (B, prediction_hidden_dim)。
+        ``None``(デフォルト)のときは既存の計算と完全に同一(後方互換)。
+        """
+        if self.prediction_type == "lstm":
+            embedded = self.pred_emb(y)  # (B, T_y, output_embed_dim)
+            if profile_features is not None:
+                prefix = self.profile_lstm_proj(profile_features).unsqueeze(1)  # (B, 1, E)
+                embedded = torch.cat([prefix, embedded], dim=1)
+            pred_out, _ = self.pred_lstm(embedded)
+            if profile_features is not None:
+                pred_out = pred_out[:, 1:, :]
+            return pred_out
+        return self.pred_transformer(y, prefix_embed=profile_features)
+
+    def forward(self, x, y, profile_features=None):
         """
         x: 入力ローマ字のテンソル (Batch, Time_x)
         y: 出力済み日本語のテンソル (Batch, Time_y)
+        profile_features: 段階B条件付け用の入力一式(dict)、もしくは ``None``。
+            ``{"domain", "lang", "word_char_ids", "word_char_mask", "word_mask"}``
+            を持つ(``model.profile_encoder.encode_profile_batch`` が組み立てる
+            形式)。``profile_conditioning=False`` のときは無視される。
         """
         # --- Encoder ---
         enc_out = self.encode(x)  # (Batch, Time_x, Hidden)
 
+        # --- プロファイルエンコーダ (段階B, profile_conditioning=True のみ) ---
+        e_u = None
+        if self.profile_conditioning and profile_features is not None:
+            embedding = self.pred_emb if self.prediction_type == "lstm" else self.pred_transformer.emb
+            e_u = self.profile_encoder(
+                domain=profile_features["domain"],
+                lang=profile_features["lang"],
+                word_char_ids=profile_features["word_char_ids"],
+                word_char_mask=profile_features["word_char_mask"],
+                word_mask=profile_features["word_mask"],
+                embedding=embedding,
+            )
+
         # --- Prediction Network ---
-        pred_out = self.predict(y)  # (Batch, Time_y, Hidden)
+        pred_out = self.predict(y, profile_features=e_u)  # (Batch, Time_y, Hidden)
 
         # --- Joint Network ---
         # 計算を効率化するため、ブロードキャストで結合 (Batch, Time_x, Time_y, Hidden*2)

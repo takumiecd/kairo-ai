@@ -63,19 +63,50 @@ class TransformerSequenceEncoder(nn.Module):
         )
         self.net = nn.TransformerEncoder(layer, num_layers)
 
-    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
-        """tokens: (B, T) のトークンID → (B, T, model_dim)。"""
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        prefix_embed: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """tokens: (B, T) のトークンID → (B, T, model_dim)。
+
+        ``prefix_embed`` (段階B条件付け, docs/PROFILE.md §4): 指定すると
+        ``model_dim`` 次元の1ベクトルを系列の先頭に**プレフィックストークン**
+        として注入する(位置0)。causal でも全位置から見える(先頭なので未来
+        マスクの影響を受けない)。出力は挿入前と同じ ``(B, T, model_dim)`` に
+        戻すため、注入した先頭位置は内部で落とす。``None`` のとき(デフォルト)
+        は既存の計算経路と完全に同一(後方互換)。
+        """
         length = tokens.shape[1]
         if length > self.max_positions:
             raise ValueError(
                 f"sequence length {length} exceeds max_positions={self.max_positions}"
             )
+        total_length = length + (1 if prefix_embed is not None else 0)
+        if total_length > self.max_positions:
+            raise ValueError(
+                f"sequence length {total_length} (including profile prefix) "
+                f"exceeds max_positions={self.max_positions}"
+            )
 
-        positions = torch.arange(length, device=tokens.device)
-        hidden = self.proj(self.emb(tokens)) + self.pos(positions)[None]
+        positions = torch.arange(total_length, device=tokens.device)
+        token_positions = positions[1:] if prefix_embed is not None else positions
+        token_hidden = self.proj(self.emb(tokens)) + self.pos(token_positions)[None]
 
         # <pad> に注意を奪われないよう無視させる。
         pad_mask = tokens == self.pad_id
-        attn_mask = build_causal_mask(length, tokens.device) if self.causal else None
 
-        return self.net(hidden, mask=attn_mask, src_key_padding_mask=pad_mask)
+        if prefix_embed is not None:
+            batch_size = tokens.shape[0]
+            prefix_hidden = (prefix_embed + self.pos(positions[0])[None]).unsqueeze(1)
+            hidden = torch.cat([prefix_hidden, token_hidden], dim=1)
+            prefix_pad = torch.zeros((batch_size, 1), dtype=torch.bool, device=tokens.device)
+            pad_mask = torch.cat([prefix_pad, pad_mask], dim=1)
+        else:
+            hidden = token_hidden
+
+        attn_mask = build_causal_mask(hidden.shape[1], tokens.device) if self.causal else None
+        out = self.net(hidden, mask=attn_mask, src_key_padding_mask=pad_mask)
+        if prefix_embed is not None:
+            out = out[:, 1:, :]
+        return out
