@@ -289,6 +289,28 @@ python -m decode.beam \
 
 定式化・プロファイルの中身・実装順序は [docs/PROFILE.md](docs/PROFILE.md) を参照。
 
+### プロファイルの更新経路
+
+```
+~/.config/kairo/feedback.jsonl (IME が書く)
+  -> python -m user_profile.from_feedback  -> profile.json
+  -> python -m user_profile.export_bias    -> profile_bias.tsv
+  -> kairo-core が ~/.config/kairo/profile_bias.tsv を読んでスコア融合
+```
+
+この2段を毎回フル実行する代わりに、`python -m user_profile.refresh` を使うと
+一発で通せる（`feedback.jsonl` の前回処理済み位置からの**増分適用**で、`profile.json`
+と `profile_bias.tsv` の両方をアトミックに書き直す）:
+
+```bash
+python -m user_profile.refresh                          # 既定: ~/.config/kairo/ 配下
+python -m user_profile.refresh --config-dir /path/to/dir # テスト用に差し替え
+```
+
+15分間隔などで定期実行したい場合は、`kairo` リポジトリ側の
+[`tools/install_profile_refresh_agent.sh`](../kairo/tools/install_profile_refresh_agent.sh)
+（launchd LaunchAgent インストーラ）を使う。
+
 > **旧方針（LoRA ローカル微調整）は廃止しました。** θ を動かすため破滅的忘却・モデル汚染を
 > 持ち込むためです。旧実装（`train.rnnt.lora`、`model/lora.py`）は git 履歴に残っています。
 

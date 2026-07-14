@@ -90,12 +90,19 @@ class ProfileMeta:
     version: int = DEFAULT_VERSION
     base_profile_id: str | None = None
     total_units: int = 0  # N: 総確定文字数
+    # source_offsets: 増分更新用。feedback.jsonl のパス(str) -> 前回までに
+    # 消費し終えたバイトオフセット。``user_profile.refresh`` がこれを使って
+    # 「前回処理済みイベント位置」以降だけを適用する(feedback.jsonl は
+    # append-only なので安全)。旧バージョンの profile.json には存在しない
+    # フィールドなので、from_dict では欠落時に空 dict へフォールバックする。
+    source_offsets: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
             "version": self.version,
             "base_profile_id": self.base_profile_id,
             "total_units": self.total_units,
+            "source_offsets": dict(self.source_offsets),
         }
 
     @staticmethod
@@ -104,6 +111,9 @@ class ProfileMeta:
             version=int(data.get("version", DEFAULT_VERSION)),
             base_profile_id=data.get("base_profile_id"),
             total_units=int(data.get("total_units", 0)),
+            source_offsets={
+                str(key): int(value) for key, value in data.get("source_offsets", {}).items()
+            },
         )
 
 
