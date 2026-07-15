@@ -64,49 +64,12 @@ class StripPiiTest(unittest.TestCase):
         cleaned = source_github.strip_pii("@takumiecd さん確認お願いします")
         self.assertNotIn("@takumiecd", cleaned)
 
-
-class FetchIssueTextsTest(unittest.TestCase):
-    def test_skips_pull_requests_but_includes_any_author(self):
-        page1 = [
-            {
-                "title": "変換精度が落ちる",
-                "body": "特定の入力でCERが悪化する",
-                "user": {"login": "acme"},
-            },
-            {"title": "PRです", "body": "説明", "pull_request": {"url": "x"}, "user": {"login": "acme"}},
-            {
-                "title": "他人が書いたissue",
-                "body": "第三者の報告",
-                "user": {"login": "someone-else"},
-            },
-        ]
-
-        def fake_request(path, token):
-            self.assertIn("/repos/acme/tool/issues?state=all", path)
-            if "page=1" in path:
-                return page1
-            return []
-
-        with mock.patch.object(source_github, "github_request", side_effect=fake_request):
-            texts = source_github.fetch_issue_texts("acme", "tool", None, max_issues=50)
-
-        self.assertEqual(len(texts), 2)
-        self.assertIn("変換精度が落ちる", texts[0])
-        self.assertIn("他人が書いたissue", texts[1])
-
-    def test_stops_at_max_issues(self):
-        page1 = [
-            {"title": f"issue{i}", "body": "本文", "user": {"login": "acme"}}
-            for i in range(3)
-        ]
-
-        def fake_request(path, token):
-            return page1
-
-        with mock.patch.object(source_github, "github_request", side_effect=fake_request):
-            texts = source_github.fetch_issue_texts("acme", "tool", None, max_issues=2)
-
-        self.assertEqual(len(texts), 2)
+    def test_removes_identity_bearing_commit_trailer(self):
+        cleaned = source_github.strip_pii(
+            "バグを修正した。\nCo-authored-by: Example Person <person@example.com>"
+        )
+        self.assertNotIn("Example Person", cleaned)
+        self.assertIn("バグを修正した。", cleaned)
 
 
 class BuildCorpusTextTest(unittest.TestCase):
@@ -152,6 +115,12 @@ class IngestRepoTest(unittest.TestCase):
                 "default_branch": "main",
             },
             "/repos/acme/tool/commits/main": {"sha": "deadbeef"},
+            "/repos/acme/tool/license": {
+                "encoding": "base64",
+                "content": source_github.base64.b64encode(
+                    "MIT License\nCopyright Example".encode("utf-8")
+                ).decode("ascii"),
+            },
             "/repos/acme/tool/readme": {
                 "encoding": "base64",
                 "content": source_github.base64.b64encode(
@@ -179,6 +148,9 @@ class IngestRepoTest(unittest.TestCase):
 
         self.assertEqual(manifest["repo"], "acme/tool")
         self.assertEqual(manifest["license_spdx_id"], "MIT")
+        self.assertIn("MIT License", manifest["license_text"])
+        self.assertEqual(manifest["legal_basis"], "repository_license")
+        self.assertEqual(manifest["usage_scope"], "profile_training_and_inference")
         self.assertEqual(manifest["commit_sha"], "deadbeef")
         self.assertEqual(manifest["commit_messages"], 2)
         joined = "".join(text_units)

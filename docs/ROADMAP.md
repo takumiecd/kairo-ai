@@ -141,10 +141,12 @@ stay fixed per user — no local fine-tuning (LoRA-style updates are
 abandoned; see [PROFILE.md](PROFILE.md)).
 
 - Build the profile builder (feedback.jsonl → profile at runtime; corpus
-  stream → virtual profile at training time; same code for both).
-- Stage A: trie-based score fusion in `decode/beam.py` (no retraining).
-- Stage B (after measuring Stage A): profile-conditioned pretraining with
-  virtual user streams; inject profile embedding into the prediction network.
+  stream → causal profile transitions at training time; same update rule for both).
+- Stage A: trie-based residual score fusion in `decode/beam.py` (no retraining).
+- Stage B (after measuring Stage A): keep the default/base path anchored and
+  learn only local candidate-score deltas from profile-before/profile-after
+  transitions. Treat the existing profile-conditioned RNN-T as an experiment,
+  not the primary personalization path.
 - Keep personalization private and local-first.
 
 ## Immediate Implementation Plan

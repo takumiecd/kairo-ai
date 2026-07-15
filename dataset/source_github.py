@@ -1,16 +1,15 @@
-"""GitHubリポジトリのライセンスを確認し、OKなら日本語テキスト(README+コミット
-メッセージ+任意でissue)をプレーンテキストコーパスへ変換する。
+"""GitHubリポジトリのライセンスを確認し、READMEとコミットメッセージの
+日本語テキストをプレーンテキストコーパスへ変換する。
 
-主な用途は `dataset.profile_stream` の `--persona name=path:domain:plain` で使う
-engineerペルソナ用コーパス。ライセンスが許可リストに無いリポジトリは拒否し、
-コミットの著者名・メールアドレス等の個人情報は取り込まない(本文中に紛れ込んだ
-メール・URL・@メンション・トークン様文字列も機械的に除去する)。ソースコード
-ファイル本体やコード内コメントは対象外(日本語のかな漢字変換学習という目的に
-対して価値が薄いため)。issueはPRを除くtitle/bodyを取得する
-(`--include-issues`、既定オフ)。issueは投稿者を問わず取得する。リポジトリの
-LICENSEがissueまで及ぶかは不明瞭だが、機械学習(情報解析目的)での利用は
-著作権法30条の4により権利者の許諾なく行える、というのがここでの法的根拠
-(`docs/DATA_POLICY.md` 参照)。
+用途はengineer領域のRaw Datasetと、因果的なprofile transitionを作るための
+source corpus。コーパス全体を固定のengineer profileとして扱わず、現在targetを
+含まない``profile_before``と結び付けて学習・評価に使う。
+
+ライセンスが許可リストに無いリポジトリは拒否し、検出したライセンス本文を
+manifestへ保存する。本文中のメール・URL・@メンション・既知のコミット
+トレーラー・トークン様文字列はベストエフォートで除去するが、完全な匿名化を
+保証するものではない。ソースコード、コード内コメント、issue、PR本文・コメント
+は対象外とする(``docs/DATA_POLICY.md`` 参照)。
 
 使い方::
 
@@ -41,9 +40,9 @@ from dataset.source_text import normalize_lines
 
 API_ROOT = "https://api.github.com"
 
-# 複製・改変・別ライセンスでの再配布が明示的に許可されている(かつ要求が著作権
-# 表示保持程度に留まる)ライセンスのみ。コピーレフト系(GPL/LGPL/AGPL)や
-# NC/ND系、LICENSE未設定(NOASSERTION)は対象外。
+# 再利用が明示的に許可されている寛容ライセンスのみ。個々の著作権表示・NOTICE・
+# 帰属表示等の条件は別途満たす。コピーレフト系(GPL/LGPL/AGPL)やNC/ND系、
+# LICENSE未設定(NOASSERTION)は対象外。
 ALLOWED_LICENSES = {
     "MIT",
     "Apache-2.0",
@@ -58,6 +57,10 @@ EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
 URL_RE = re.compile(r"https?://\S+")
 TOKEN_LIKE_RE = re.compile(r"\b[A-Za-z0-9_-]{24,}\b")
 MENTION_RE = re.compile(r"@[A-Za-z0-9_-]+")
+COMMIT_TRAILER_RE = re.compile(
+    r"^(?:co-authored-by|signed-off-by|reviewed-by|acked-by|tested-by):.*$",
+    flags=re.IGNORECASE | re.MULTILINE,
+)
 
 
 class LicenseNotAllowedError(RuntimeError):
@@ -130,6 +133,25 @@ def fetch_readme_text(owner: str, repo: str, token: str | None) -> str:
     return base64.b64decode(payload["content"]).decode("utf-8", errors="replace")
 
 
+def fetch_license_text(owner: str, repo: str, token: str | None) -> str:
+    """検出されたリポジトリライセンスの原文を取得する。"""
+    try:
+        payload = github_request(f"/repos/{owner}/{repo}/license", token)
+    except HTTPError as error:
+        if error.code == 404:
+            raise LicenseNotAllowedError(
+                "GitHub detected a license but its text could not be fetched; "
+                "review the repository license manually."
+            ) from error
+        raise
+    if payload.get("encoding") != "base64" or not payload.get("content"):
+        raise LicenseNotAllowedError(
+            "GitHub detected a license but returned no preservable license text; "
+            "review the repository license manually."
+        )
+    return base64.b64decode(payload["content"]).decode("utf-8", errors="replace")
+
+
 def fetch_commit_messages(
     owner: str, repo: str, branch: str, token: str | None, max_commits: int
 ) -> list[str]:
@@ -155,42 +177,8 @@ def fetch_commit_messages(
     return messages
 
 
-def fetch_issue_texts(
-    owner: str, repo: str, token: str | None, max_issues: int
-) -> list[str]:
-    """Issueのtitle+bodyを取得する(PRは``/issues``に混ざって返るため除外)。
-
-    投稿者はリポジトリオーナーに限定しない(``--include-issues``で明示的に
-    オプトインした場合のみ、第三者投稿分も含めて取得する。法的根拠は
-    著作権法30条の4(情報解析目的の利用)。詳細は``docs/DATA_POLICY.md``)。
-    """
-    texts: list[str] = []
-    page = 1
-    per_page = min(100, max_issues) if max_issues > 0 else 0
-    while per_page > 0 and len(texts) < max_issues:
-        payload = github_request(
-            f"/repos/{owner}/{repo}/issues?state=all&per_page={per_page}&page={page}",
-            token,
-        )
-        if not payload:
-            break
-        for entry in payload:
-            if "pull_request" in entry:
-                continue
-            title = entry.get("title") or ""
-            body = entry.get("body") or ""
-            combined = "\n".join(part for part in (title, body) if part)
-            if combined:
-                texts.append(combined)
-            if len(texts) >= max_issues:
-                break
-        if len(payload) < per_page:
-            break
-        page += 1
-    return texts
-
-
 def strip_pii(text: str) -> str:
+    text = COMMIT_TRAILER_RE.sub("", text)
     text = EMAIL_RE.sub("", text)
     text = URL_RE.sub("", text)
     text = MENTION_RE.sub("", text)
@@ -201,11 +189,9 @@ def strip_pii(text: str) -> str:
 def build_corpus_text(
     readme: str,
     commit_messages: list[str],
-    issue_texts: list[str] | None = None,
 ) -> str:
     blocks = [strip_pii(readme)]
     blocks.extend(strip_pii(message) for message in commit_messages)
-    blocks.extend(strip_pii(text) for text in issue_texts or [])
     return normalize_lines("\n".join(blocks))
 
 
@@ -230,32 +216,31 @@ def ingest_repo(
     min_chars: int,
     max_chars: int,
     max_units: int | None,
-    include_issues: bool = False,
-    max_issues: int = 0,
 ) -> tuple[list[str], dict]:
     owner, repo = parse_repo_arg(repo_arg)
     info = fetch_repo_info(owner, repo, token)
     check_license_allowed(info.spdx_id)
     commit_sha = fetch_latest_commit_sha(owner, repo, info.default_branch, token)
+    license_text = fetch_license_text(owner, repo, token)
     readme = fetch_readme_text(owner, repo, token)
     commit_messages = fetch_commit_messages(
         owner, repo, info.default_branch, token, max_commits
     )
-    issue_texts = (
-        fetch_issue_texts(owner, repo, token, max_issues) if include_issues else []
-    )
-    corpus_text = build_corpus_text(readme, commit_messages, issue_texts)
+    corpus_text = build_corpus_text(readme, commit_messages)
     text_units = extract_text_units(
         corpus_text, max_units=max_units, min_chars=min_chars, max_chars=max_chars
     )
     manifest = {
         "repo": f"{owner}/{repo}",
+        "source_url": f"https://github.com/{owner}/{repo}",
         "license_spdx_id": info.spdx_id,
+        "license_text": license_text,
+        "legal_basis": "repository_license",
+        "usage_scope": "profile_training_and_inference",
         "default_branch": info.default_branch,
         "commit_sha": commit_sha,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "commit_messages": len(commit_messages),
-        "issues": len(issue_texts),
         "has_readme": bool(readme),
         "text_units": len(text_units),
     }
@@ -266,7 +251,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True, help="owner/repo または GitHub URL")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--manifest", type=Path, default=None)
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        required=True,
+        help="必須。出典・取得SHA・ライセンス本文を保存するJSON。",
+    )
     parser.add_argument(
         "--token", default=None, help="未指定なら環境変数 GITHUB_TOKEN を使う"
     )
@@ -274,13 +264,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-chars", type=int, default=8)
     parser.add_argument("--max-chars", type=int, default=80)
     parser.add_argument("--max-units", type=int, default=None)
-    parser.add_argument(
-        "--include-issues",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="issue(PR以外、投稿者は問わない)のtitle/bodyも取り込む",
-    )
-    parser.add_argument("--max-issues", type=int, default=200)
     return parser.parse_args()
 
 
@@ -294,13 +277,10 @@ def main() -> None:
         min_chars=args.min_chars,
         max_chars=args.max_chars,
         max_units=args.max_units,
-        include_issues=args.include_issues,
-        max_issues=args.max_issues,
     )
     write_text_corpus(args.output, text_units)
     manifest["output"] = str(args.output)
-    if args.manifest:
-        write_manifest(args.manifest, manifest)
+    write_manifest(args.manifest, manifest)
     print(
         f"repo={manifest['repo']} license={manifest['license_spdx_id']} "
         f"text_units={len(text_units)}"
