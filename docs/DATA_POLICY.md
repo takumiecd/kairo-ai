@@ -36,6 +36,37 @@ The project should not start with arbitrary web scraping. In particular, avoid:
 - Common Crawl-derived data as a default source before license and quality
   handling are designed.
 
+## GitHub-Derived Sources
+
+`dataset/source_github.py` builds persona/domain corpora (e.g. the "engineer"
+profile-stream persona) from GitHub repositories. Two separate safeguards
+apply, for two separate risks:
+
+- **Repository license (README, commit messages, source code if ever added):**
+  only repositories under a permissive allow-list are used —
+  MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, CC0-1.0, Unlicense.
+  Repositories with no LICENSE file (`NOASSERTION`), copyleft licenses
+  (GPL/LGPL/AGPL), or NC/ND-style terms are rejected outright, since the
+  repository owner is presumed to be the actual copyright holder of these
+  artifacts and the license they chose governs reuse.
+- **Issues (`--include-issues`, opt-in):** issue titles/bodies may be written
+  by any GitHub user, not just the repository owner, so the repository's
+  LICENSE cannot be assumed to cover them, and GitHub's Terms of Service only
+  grant a narrow in-service viewing license — not a general reuse license.
+  Ingesting them is therefore justified on a different basis: Japan's
+  Copyright Act Article 30-4 (information analysis exception), which permits
+  use of copyrighted works for machine learning / information analysis
+  without the rightsholder's permission, independent of the work's declared
+  license. This is a narrower, purpose-specific justification than the
+  license allow-list above, and it does not extend to redistributing the
+  raw issue text itself — only to training on it.
+
+In both cases, author identity (name/email/GitHub login) is never collected,
+and issue/commit/README text is scrubbed of email addresses, URLs, GitHub
+`@mentions`, and long token-like strings before use. Each ingest run writes a
+manifest (repo, SPDX license id, commit SHA, fetch timestamp) so sourcing
+decisions stay auditable, mirroring the Aozora Bunko manifest convention.
+
 ## Dataset Metadata
 
 Generated examples should carry source metadata so datasets can be audited later.
